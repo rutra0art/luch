@@ -1,12 +1,14 @@
 {
   "name": "luch-browser",
-  "productName": "Луч",
+  "productName": "Luch",
   "version": "0.1.0",
   "description": "Минималистичный браузер на движке Chromium",
   "license": "GPL-3.0",
   "main": "src/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node --test \"tests/unit/*.test.js\"",
+    "test:e2e": "node tests/e2e.mjs"
   },
   "devDependencies": {
     "electron": "^38.0.0"

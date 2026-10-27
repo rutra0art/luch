@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Запуск браузера «Луч»: при первом запуске ставит Electron (движок Chromium)
+# Запуск браузера Luch: при первом запуске ставит Electron (движок Chromium)
 cd "$(dirname "$0")"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 if ! command -v npm >/dev/null; then

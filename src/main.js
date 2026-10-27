@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, ipcMain, nativeTheme, session, webContents, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, shell, ipcMain, nativeTheme, nativeImage, session, webContents, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -6,8 +6,14 @@ const { ElectronChromeExtensions } = require('electron-chrome-extensions');
 const { installChromeWebStore, uninstallExtension } = require('electron-chrome-web-store');
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 const { adsLists, adsAndTrackingLists, fullLists } = require('@ghostery/adblocker');
+const importer = require('./importer');
+const translator = require('./translator');
 
-app.setName('Луч');
+app.setName('Luch');
+// Данные остаются в прежней папке «Луч»: вкладки, входы на сайты и настройки не теряются после переименования
+// --profile=<папка> запускает Luch с отдельным профилем, например чистым — как при первой установке
+const profileArg = process.argv.find(a => a.startsWith('--profile='));
+app.setPath('userData', profileArg ? profileArg.slice('--profile='.length) : path.join(app.getPath('appData'), 'Луч'));
 app.commandLine.appendSwitch('lang', 'ru');
 
 // Представляемся обычным Chrome: иначе Google не даёт войти в аккаунт во «встроенном браузере»
@@ -49,6 +55,10 @@ function createWindow({ incognito = false } = {}) {
   win.loadFile(path.join(__dirname, 'ui', 'index.html'), { query: incognito ? { incognito: '1' } : {} });
 
   // Каждую вкладку регистрируем в системе расширений её сессии
+  // Интерфейсу нужно знать о полноэкранном режиме: в нём сайты не подгоняются по ширине
+  win.on('enter-full-screen', () => win.webContents.send('command', 'fullscreen', true));
+  win.on('leave-full-screen', () => win.webContents.send('command', 'fullscreen', false));
+
   win.webContents.on('did-attach-webview', (_e, wc) => {
     ElectronChromeExtensions.fromSession(wc.session)?.addTab(wc, win);
   });
@@ -315,23 +325,36 @@ ipcMain.handle('clear-data', async (_e, what) => {
   }
 });
 ipcMain.handle('new-window', (_e, opts) => { createWindow(opts); });
+// Вступление при первом запуске показывается на весь экран
+ipcMain.handle('set-fullscreen', (e, on) => { BrowserWindow.fromWebContents(e.sender)?.setFullScreen(Boolean(on)); });
+
+// Перенос данных из других браузеров
+ipcMain.handle('import-detect', () => importer.detect());
+ipcMain.handle('import-run', (_e, opts) => importer.runImport(opts));
+
+// Перевод страниц: онлайн через Google, запасной — встроенный перевод macOS
+ipcMain.handle('translate-texts', (_e, texts, target, source, engine) => translator.translate(texts, target, source, engine).catch((err) => ({ error: err.message })));
+ipcMain.handle('translate-detect', (_e, sample, hint) => translator.detect(sample, hint).catch(() => 'und'));
+ipcMain.handle('translate-prepare', (_e, source, target) => translator.prepare(source, target).catch(() => false));
+app.on('will-quit', () => translator.stop());
 
 function buildMenu() {
   const item = (label, accelerator, cmd, ...args) => ({ label, accelerator: accelerator || undefined, click: () => send(cmd, ...args) });
   const sep = { type: 'separator' };
   const template = [
     {
-      label: 'Луч',
+      label: 'Luch',
       submenu: [
-        { label: 'О программе «Луч»', role: 'about' },
+        { label: 'О программе Luch', role: 'about' },
         sep,
         item('Настройки…', 'CmdOrCtrl+,', 'settings'),
+        item('Импорт из другого браузера…', null, 'import'),
         sep,
-        { label: 'Скрыть «Луч»', role: 'hide' },
+        { label: 'Скрыть Luch', role: 'hide' },
         { label: 'Скрыть остальные', role: 'hideOthers' },
         { label: 'Показать все', role: 'unhide' },
         sep,
-        { label: 'Завершить «Луч»', role: 'quit' },
+        { label: 'Завершить Luch', role: 'quit' },
       ],
     },
     {
@@ -377,16 +400,19 @@ function buildMenu() {
         item('Показать или скрыть вкладки', 'CmdOrCtrl+S', 'toggle-tabbar'),
         item('Автоскрытие вкладок', 'Alt+CmdOrCtrl+S', 'toggle-autohide'),
         sep,
-        item('Разделить экран', 'CmdOrCtrl+Shift+=', 'split'),
+        item('Разделить экран', 'Alt+CmdOrCtrl+=', 'split'),
         item('Следующая панель', 'Alt+CmdOrCtrl+]', 'split-focus', 1),
         item('Предыдущая панель', 'Alt+CmdOrCtrl+[', 'split-focus', -1),
-        item('Убрать разделение', 'CmdOrCtrl+Shift+-', 'unsplit'),
+        item('Убрать разделение', 'Alt+CmdOrCtrl+-', 'unsplit'),
         sep,
         item('Перевести страницу', 'CmdOrCtrl+Shift+Y', 'translate'),
         sep,
         item('Увеличить', 'CmdOrCtrl+=', 'zoom', 0.5),
         item('Уменьшить', 'CmdOrCtrl+-', 'zoom', -0.5),
         item('Реальный размер', 'CmdOrCtrl+0', 'zoom', 0),
+        // Те же действия на ⌘+ (с Shift) и на Control — скрытые пункты, работают как сочетания клавиш
+        ...[['CmdOrCtrl+Plus', 0.5], ['Ctrl+=', 0.5], ['Ctrl+Plus', 0.5], ['Ctrl+-', -0.5], ['Ctrl+0', 0]]
+          .map(([accelerator, step]) => ({ label: 'Масштаб', accelerator, visible: false, acceleratorWorksWhenHidden: true, click: () => send('zoom', step) })),
         sep,
         item('Инструменты разработчика', 'Alt+CmdOrCtrl+I', 'devtools'),
         { label: 'Полноэкранный режим', role: 'togglefullscreen' },
@@ -405,6 +431,7 @@ function buildMenu() {
         sep,
         item('Закрепить или открепить вкладку', 'CmdOrCtrl+D', 'pin-tab'),
         item('Дублировать', null, 'duplicate-tab'),
+        item('Новая группа', 'Shift+Alt+CmdOrCtrl+N', 'new-group'),
         item('Новая группа с вкладкой', 'Alt+CmdOrCtrl+N', 'group-tab'),
         item('Переименовать…', null, 'rename-tab'),
         item('Выключить или включить звук', null, 'mute-tab'),
@@ -443,8 +470,19 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// Иконка в Dock следует теме системы: тёмная с голубой короной, светлая — с золотой
+function applyDockIcon() {
+  if (!app.dock) return;
+  const file = nativeTheme.shouldUseDarkColors ? 'icon-dark.png' : 'icon-light.png';
+  app.dock.setIcon(nativeImage.createFromPath(path.join(__dirname, 'assets', file)));
+}
+
 app.whenReady().then(() => {
   prefs = readPrefs();
+  applyDockIcon();
+  nativeTheme.on('updated', applyDockIcon);
+  translator.warmUp();
+  app.setAboutPanelOptions({ applicationName: 'Luch', applicationVersion: app.getVersion(), iconPath: path.join(__dirname, 'assets', 'icon-dark.png') });
   ElectronChromeExtensions.handleCRXProtocol(session.defaultSession);
   setupSession(session.defaultSession);
   refreshBlocker();

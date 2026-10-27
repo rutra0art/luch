@@ -19,4 +19,10 @@ contextBridge.exposeInMainWorld('luch', {
   newWindow: (opts) => ipcRenderer.invoke('new-window', opts),
   tabCreated: (token, wcId) => ipcRenderer.send('tab-created', token, wcId),
   tabSelected: (wcId) => ipcRenderer.send('tab-selected', wcId),
+  importDetect: () => ipcRenderer.invoke('import-detect'),
+  importRun: (opts) => ipcRenderer.invoke('import-run', opts),
+  setFullscreen: (on) => ipcRenderer.invoke('set-fullscreen', on),
+  translateTexts: (texts, target, source, engine) => ipcRenderer.invoke('translate-texts', texts, target, source, engine),
+  translateDetect: (sample, hint) => ipcRenderer.invoke('translate-detect', sample, hint),
+  translatePrepare: (source, target) => ipcRenderer.invoke('translate-prepare', source, target),
 });

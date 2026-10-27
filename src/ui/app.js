@@ -10,7 +10,7 @@ const SEARCH_ENGINES = {
 };
 const DEFAULT_SETTINGS = {
   search: 'google', theme: 'system', restore: true, translateTo: 'ru',
-  newTabsTop: true, autohide: false, cmdClickGroups: true, cleanupHours: 0,
+  newTabsTop: true, autohide: false, cmdClickGroups: true, cleanupHours: 0, autoFit: true, translateEngine: 'online',
 };
 const DEFAULT_PINS = [
   { url: 'https://mail.google.com/', title: 'Gmail' },
@@ -79,7 +79,8 @@ function looksLikeUrl(text) {
 function toUrl(input) {
   const text = input.trim();
   if (!text) return NEW_TAB_URL;
-  if (/^[a-z-]+:/i.test(text) && looksLikeUrl(text)) return text;
+  // Готовый адрес со схемой; «localhost:3000» схемой не считается — это хост с портом
+  if (/^(https?|file|chrome-extension):\/\//i.test(text) || /^(about|data):/i.test(text)) return text;
   if (looksLikeUrl(text)) return 'https://' + text;
   return searchUrl(text);
 }
@@ -123,6 +124,10 @@ let activeId = null;
 let nextId = 1;
 const closedStack = [];
 let split = null; // { a, b } — id вкладок на разделённом экране
+let dragData = null; // что сейчас перетаскивают: { kind: 'tab' | 'pinned', id }
+let renderPending = false;
+let dragActive = false;
+function clearDragging() { dragActive = false; document.body.classList.remove('dragging'); }
 
 let spaces = INCOGNITO
   ? [{ id: 1, name: 'Инкогнито', color: '#b18cff' }]
@@ -212,6 +217,7 @@ function bindWebview(tab, token) {
     if (tab.id === activeId) syncChrome();
   };
 
+  wv.addEventListener('dom-ready', () => { try { wv.setVisualZoomLevelLimits(1, 3); } catch {} }, { once: true });
   wv.addEventListener('did-attach', () => {
     tab.wcId = wv.getWebContentsId();
     if (token) window.luch.tabCreated(token, tab.wcId);
@@ -226,6 +232,7 @@ function bindWebview(tab, token) {
     tab.loading = false;
     if (tab.id === activeId) setLoading(false);
     autoTranslate(tab);
+    autoFit(tab);
     update();
   });
   // Стадии загрузки двигают линию и блик под адресом
@@ -236,7 +243,10 @@ function bindWebview(tab, token) {
     if (tab.id === activeId) bumpProgress(0.5);
     tab.url = e.url;
     tab.favicon = null;
+    // Другой сайт — заново узнаём, нужна ли ему подгонка
+    if (hostOf(e.url) !== tab.fitHost) { tab.minWidth = 0; tab.fitHost = hostOf(e.url); }
     if (tab.showOriginal !== e.url) tab.showOriginal = null;
+    stopTranslation(tab);
     addHistory(tab.url, tab.title);
     update();
     persist();
@@ -302,6 +312,7 @@ function activateTab(id) {
 }
 
 function layoutViews() {
+  if (typeof refitVisible === 'function') refitVisible(200);
   const inSplit = split && (split.a === activeId || split.b === activeId);
   for (const t of tabs) {
     if (!t.webview) continue;
@@ -318,6 +329,7 @@ function closeTab(id, { remember = true } = {}) {
   const idx = tabs.findIndex(t => t.id === id);
   if (idx < 0) return;
   const [tab] = tabs.splice(idx, 1);
+  clearInterval(tab.trTimer);
   if (remember && tab.url !== NEW_TAB_URL) closedStack.push({ url: tab.url, spaceId: tab.spaceId });
   if (tab.webview) tab.webview.remove();
   let next = null;
@@ -344,6 +356,8 @@ function openUrl(url) {
 // ---------- Отрисовка колонки ----------
 
 function renderTabs() {
+  // Пока что-то перетаскивают, список не трогаем — перерисуем после броска
+  if (dragData) { renderPending = true; return; }
   renderPins();
   renderPinned();
   tabsEl.innerHTML = '';
@@ -356,6 +370,10 @@ function renderTabs() {
       if (g) { tabsEl.appendChild(buildGroup(g)); continue; }
     }
     tabsEl.appendChild(buildTabRow(t));
+  }
+  // Пустые группы тоже показываем — в них можно перетащить вкладки позже
+  for (const g of groups) {
+    if (g.spaceId === currentSpace && !shownGroups.has(g.id)) tabsEl.appendChild(buildGroup(g));
   }
   syncPageChip();
 }
@@ -399,7 +417,8 @@ function buildTabRow(t) {
   close.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t.id); });
   row.appendChild(close);
 
-  row.addEventListener('mousedown', (e) => { if (e.button === 0) activateTab(t.id); });
+  // Активируем по щелчку, а не по нажатию: иначе перерисовка списка обрывает перетаскивание
+  row.addEventListener('click', () => activateTab(t.id));
   row.addEventListener('auxclick', (e) => { if (e.button === 1) closeTab(t.id); });
   row.addEventListener('dblclick', () => renameTab(t, row));
   row.addEventListener('contextmenu', (e) => { e.preventDefault(); tabMenu(t, row); });
@@ -420,15 +439,21 @@ function buildGroup(g) {
   head.addEventListener('contextmenu', async (e) => {
     e.preventDefault();
     const choice = await window.luch.menu([
+      { id: 'new-tab', label: 'Новая вкладка в группе' },
       { id: 'rename', label: 'Переименовать группу' },
       { label: 'Цвет', submenu: SPACE_COLORS.map((c, i) => ({ id: 'color:' + c, label: COLOR_NAMES[i], checked: g.color === c })) },
       { type: 'separator' },
-      { id: 'ungroup', label: 'Разгруппировать' },
-      { id: 'close', label: 'Закрыть все вкладки группы' },
+      { id: 'new-group', label: 'Новая группа' },
+      { type: 'separator' },
+      { id: 'ungroup', label: 'Разгруппировать (вкладки останутся)', enabled: items.length > 0 },
+      { id: 'close', label: 'Закрыть все вкладки группы', enabled: items.length > 0 },
+      { id: 'delete', label: 'Удалить группу' },
     ]);
-    if (choice === 'rename') renameGroup(g, head);
+    if (choice === 'new-tab') newTabInGroup(g);
+    else if (choice === 'rename') renameGroup(g, head);
     else if (choice?.startsWith('color:')) { g.color = choice.slice(6); saveGroups(); renderTabs(); }
-    else if (choice === 'ungroup') { items.forEach(t => (t.groupId = null)); cleanupGroups(); renderTabs(); persist(); }
+    else if (choice === 'new-group') newGroup();
+    else if (choice === 'ungroup' || choice === 'delete') deleteGroup(g, { closeTabs: false });
     else if (choice === 'close') items.slice().forEach(t => closeTab(t.id));
   });
   bindDrop(head, (data) => {
@@ -438,31 +463,69 @@ function buildGroup(g) {
   const list = el('div', 'group-items' + (g.open ? '' : ' closed'));
   list.style.setProperty('--gcolor', g.color);
   items.forEach(t => list.appendChild(buildTabRow(t)));
+  if (!items.length) {
+    const hint = el('div', 'group-empty', 'Перетащите сюда вкладки');
+    bindDrop(hint, (data) => {
+      if (data.kind === 'tab') moveTabToGroup(data.id, g.id);
+      else if (data.kind === 'pinned') unpinToRegular(data.id, g.id);
+    });
+    list.appendChild(hint);
+  }
   box.append(head, list);
   return box;
 }
 
+// Группы живут сами по себе, даже пустые; убираем только группы удалённых пространств
 function cleanupGroups() {
-  const used = new Set(tabs.map(t => t.groupId).filter(Boolean));
   const before = groups.length;
-  groups = groups.filter(g => used.has(g.id));
+  groups = groups.filter(g => spaces.some(s => s.id === g.spaceId));
   if (groups.length !== before) saveGroups();
 }
 
-function newGroupWith(tab, name) {
+function createGroup(spaceId = currentSpace, name) {
   const g = {
     id: uid('g'),
-    name: name || `Группа ${groups.filter(x => x.spaceId === tab.spaceId).length + 1}`,
+    name: name || `Группа ${groups.filter(x => x.spaceId === spaceId).length + 1}`,
     color: SPACE_COLORS[groups.length % SPACE_COLORS.length],
     open: true,
-    spaceId: tab.spaceId,
+    spaceId,
   };
   groups.push(g);
-  tab.groupId = g.id;
   saveGroups();
+  return g;
+}
+
+// Пустая группа без ссылок: сразу предлагаем ввести название
+function newGroup() {
+  const g = createGroup();
+  renderTabs();
+  renameGroupLater(g);
+  return g;
+}
+
+function newGroupWith(tab, name) {
+  const g = createGroup(tab.spaceId, name);
+  tab.groupId = g.id;
   persist();
   renderTabs();
   return g;
+}
+
+function newTabInGroup(g) {
+  const last = [...tabs].reverse().find(x => x.groupId === g.id);
+  g.open = true;
+  saveGroups();
+  createTab(NEW_TAB_URL, { groupId: g.id, after: last || null, spaceId: g.spaceId });
+}
+
+function deleteGroup(g, { closeTabs = false } = {}) {
+  for (const t of tabs.filter(x => x.groupId === g.id)) {
+    if (closeTabs) closeTab(t.id); else t.groupId = null;
+  }
+  groups = groups.filter(x => x !== g);
+  saveGroups();
+  persist();
+  renderTabs();
 }
 
 function moveTabToGroup(tabId, groupId) {
@@ -522,7 +585,7 @@ function buildPinnedRow(item) {
     close.addEventListener('click', (e) => { e.stopPropagation(); closeTab(live.id, { remember: false }); });
     row.appendChild(close);
   }
-  row.addEventListener('mousedown', (e) => { if (e.button === 0) openPinned(item); });
+  row.addEventListener('click', () => openPinned(item));
   row.addEventListener('dblclick', () => renamePinned(item, row));
   row.addEventListener('contextmenu', (e) => { e.preventDefault(); pinnedMenu(item, row); });
   bindDrag(row, { kind: 'pinned', id: item.id });
@@ -663,6 +726,24 @@ async function pinnedMenu(item, row) {
   }
 }
 
+// Правый клик по пустому месту колонки: создать вкладку, группу или папку
+async function sidebarMenu(e) {
+  e.preventDefault();
+  const choice = await window.luch.menu([
+    { id: 'tab', label: 'Новая вкладка' },
+    { id: 'group', label: 'Новая группа вкладок' },
+    { id: 'folder', label: 'Новая папка для закреплённых' },
+  ]);
+  if (choice === 'tab') createTab();
+  else if (choice === 'group') newGroup();
+  else if (choice === 'folder') newFolder();
+}
+tabsEl.addEventListener('contextmenu', (e) => { if (e.target === tabsEl) sidebarMenu(e); });
+$('tabbar').addEventListener('contextmenu', (e) => {
+  if (e.target === $('tabbar') || e.target.classList.contains('tabbar-head') || e.target.classList.contains('tabbar-foot')) sidebarMenu(e);
+});
+$('btn-new').addEventListener('contextmenu', sidebarMenu);
+
 pinnedEl.addEventListener('contextmenu', async (e) => {
   if (e.target !== pinnedEl) return;
   e.preventDefault();
@@ -671,15 +752,26 @@ pinnedEl.addEventListener('contextmenu', async (e) => {
 
 // ---------- Перетаскивание ----------
 
-let dragData = null;
 function bindDrag(row, data) {
   row.addEventListener('dragstart', (e) => {
     dragData = data;
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', '');
-    row.classList.add('dragging');
+    // Разметку меняем уже после старта переноса: Chromium отменяет перетаскивание,
+    // если в dragstart сдвинуть элементы под курсором (а пустые зоны для броска при этом раскрываются)
+    dragActive = true;
+    setTimeout(() => {
+      if (!dragActive) return;
+      row.classList.add('dragging');
+      document.body.classList.add('dragging');
+    }, 0);
   });
-  row.addEventListener('dragend', () => { row.classList.remove('dragging'); dragData = null; });
+  row.addEventListener('dragend', () => {
+    row.classList.remove('dragging');
+    clearDragging();
+    dragData = null;
+    if (renderPending) { renderPending = false; renderTabs(); }
+  });
   if (data.kind !== 'tab') return;
   // Бросок на обычную вкладку ставит перетаскиваемую перед ней
   row.addEventListener('dragover', (e) => { if (dragData?.kind === 'tab') { e.preventDefault(); e.stopPropagation(); row.classList.add('drop-before'); } });
@@ -882,15 +974,89 @@ function showPinTip(anchor, p) {
   tip.hidden = false;
 }
 
+// Квадратных плиток избранного всегда не больше трёх; остальное закрепляется в списке ниже
+const MAX_FAVORITES = 3;
+
 function toggleFavorite(url, title) {
   const host = hostOf(url);
   let pins = getPins();
   if (pins.some(p => hostOf(p.url) === host)) pins = pins.filter(p => hostOf(p.url) !== host);
+  else if (pins.length >= MAX_FAVORITES) { pinUrl(url, title || host); return; }
   else pins.push({ url: originalUrl(url), title: title || host });
   store.set('pins', pins);
   renderPins();
   syncChrome();
 }
+
+function pinUrl(url, title) {
+  url = originalUrl(url);
+  const all = pinnedList().flatMap(x => x.type === 'folder' ? x.items : [x]);
+  if (all.some(x => x.url === url)) return;
+  pinnedList().push({ id: uid('p'), type: 'tab', url, title: title || hostOf(url) });
+  savePinned();
+  renderTabs();
+}
+
+// Если плиток накопилось больше трёх (из старых версий), лишние переезжают в закреплённые
+function trimFavorites() {
+  const pins = getPins();
+  if (pins.length <= MAX_FAVORITES) return;
+  for (const p of pins.slice(MAX_FAVORITES)) pinUrl(p.url, p.title);
+  store.set('pins', pins.slice(0, MAX_FAVORITES));
+}
+
+// В избранное сайты попадают только перетаскиванием: вкладкой из колонки или ссылкой со страницы
+function droppedUrl(e) {
+  const uri = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+  const url = (uri || '').split('\n').map(x => x.trim()).find(x => x && !x.startsWith('#'));
+  return url && /^https?:/i.test(url) ? url : null;
+}
+
+function addFavoriteFromDrop(e) {
+  if (dragData?.kind === 'tab') {
+    const t = tabs.find(x => x.id === dragData.id);
+    if (t && /^https?:/.test(t.url)) return { url: originalUrl(t.url), title: tabTitle(t) };
+  } else if (dragData?.kind === 'pinned') {
+    const found = findPinned(dragData.id);
+    if (found) return { url: found.item.url, title: found.item.title };
+  } else {
+    const url = droppedUrl(e);
+    if (url) return { url: originalUrl(url), title: hostOf(url) };
+  }
+  return null;
+}
+
+function canDropFavorite(e) {
+  return Boolean(dragData) || [...e.dataTransfer.types].some(t => t === 'text/uri-list' || t === 'text/plain');
+}
+
+pinsEl.addEventListener('dragover', (e) => {
+  if (!canDropFavorite(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+  pinsEl.classList.add('drop-target');
+});
+pinsEl.addEventListener('dragleave', (e) => { if (!pinsEl.contains(e.relatedTarget)) pinsEl.classList.remove('drop-target'); });
+pinsEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+  pinsEl.classList.remove('drop-target');
+  clearDragging();
+  const fav = addFavoriteFromDrop(e);
+  if (!fav || getPins().some(p => hostOf(p.url) === hostOf(fav.url))) return;
+  if (getPins().length >= MAX_FAVORITES && dragData?.kind === 'tab') pinTab(tabs.find(x => x.id === dragData.id));
+  else toggleFavorite(fav.url, fav.title);
+});
+// Пока что-то тащат, пустая сетка избранного показывает место для броска
+const markDragging = () => {
+  dragActive = true;
+  setTimeout(() => { if (dragActive) document.body.classList.add('dragging'); }, 0);
+};
+// Перенос ушёл за пределы окна или отменён — прячем раскрытые зоны
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) clearDragging(); });
+document.addEventListener('dragenter', markDragging);
+document.addEventListener('dragend', clearDragging);
+document.addEventListener('drop', clearDragging);
+pinsEl.addEventListener('dragenter', markDragging);
 
 // ---------- Пространства (профили) ----------
 
@@ -1054,14 +1220,10 @@ function syncChrome() {
   $('btn-forward').disabled = !canForward;
   renderAddressDisplay(t);
   const isNew = t.url === NEW_TAB_URL;
-  const fav = !isNew && getPins().some(p => hostOf(p.url) === hostOf(t.url));
-  $('btn-pin').disabled = isNew;
-  $('btn-pin').classList.toggle('on', fav);
-  $('btn-pin').title = fav ? 'Убрать из избранного' : 'В избранное';
   syncTranslate();
   syncNotes();
   syncPageChip();
-  document.title = isNew ? 'Луч' : tabTitle(t);
+  document.title = isNew ? 'Luch' : tabTitle(t);
 }
 
 // Адрес показываем как «сайт / заголовок», как в Dia
@@ -1156,15 +1318,43 @@ function openCommandBar(mode = 'all', { newTab = false, text = null } = {}) {
   $('cmd-mode').textContent = 'Вкладки';
   input.placeholder = mode === 'tabs' ? 'Поиск по открытым вкладкам…' : 'Поиск, адрес или вопрос к Gemini…';
   input.value = text ?? (mode === 'all' && !newTab && t && t.url !== NEW_TAB_URL ? originalUrl(t.url) : '');
-  $('cmdbar').hidden = false;
+  const bar = $('cmdbar');
+  clearTimeout(cmdCloseTimer);
+  bar.classList.remove('instant');
+  $('address-wrap').classList.add('cmd-open');
+  const wasOpen = !bar.hidden && bar.classList.contains('open');
+  bar.hidden = false;
+  placeCommandBar();
+  // Сначала показываем строку прозрачной, на следующем кадре включаем анимацию открытия
+  if (!wasOpen) { bar.classList.remove('open'); requestAnimationFrame(() => requestAnimationFrame(() => bar.classList.add('open'))); }
   input.focus();
   input.select();
   renderCommandResults();
 }
 
+// Строка ложится ровно на поле адреса: та же ширина, тот же левый край и верх
+function placeCommandBar() {
+  const bar = $('cmdbar');
+  if (bar.hidden) return;
+  const wrap = $('address-wrap').getBoundingClientRect();
+  const main = $('main').getBoundingClientRect();
+  bar.style.left = (wrap.left - main.left) + 'px';
+  bar.style.top = (wrap.top - main.top) + 'px';
+  bar.style.width = wrap.width + 'px';
+}
+window.addEventListener('resize', placeCommandBar);
+
+let cmdCloseTimer = null;
 function closeCommandBar() {
-  if ($('cmdbar').hidden) return;
-  $('cmdbar').hidden = true;
+  const bar = $('cmdbar');
+  if (bar.hidden || bar.classList.contains('instant')) return;
+  // Обратная анимация: список уезжает под поле, поле светлеет, потом прячем строку
+  bar.classList.remove('open');
+  bar.classList.add('instant');
+  // Текст строки исчезает и адрес появляется в одном кадре — без паузы и без наслоения
+  $('address-wrap').classList.remove('cmd-open');
+  clearTimeout(cmdCloseTimer);
+  cmdCloseTimer = setTimeout(() => { bar.hidden = true; bar.classList.remove('instant'); }, 200);
   activeTab()?.webview?.focus();
 }
 
@@ -1229,7 +1419,13 @@ function renderCommandResults() {
       items.push({ section: 'Эта страница', svg: ICON.tab, title: 'Копировать адрес', sub: hostOf(current), run: () => navigator.clipboard.writeText(current) });
       items.push({ section: 'Эта страница', svg: ICON.sparkle, title: 'Пересказать страницу', sub: 'Gemini', run: () => runSkill(getSkills()[0] || DEFAULT_SKILLS[0]) });
     }
-    for (const h of getHistory().filter(h => h.url !== current).slice(0, 6)) {
+    // Недавние без повторов: одна и та же страница в истории встречается много раз
+    const seenRecent = new Set();
+    for (const h of getHistory()) {
+      if (seenRecent.size >= 6) break;
+      const key = hostOf(h.url) + '|' + (h.title || h.url);
+      if (h.url === current || seenRecent.has(key)) continue;
+      seenRecent.add(key);
       items.push({ section: 'Недавние', icon: faviconFor(h.url), title: h.title || h.url, sub: hostOf(h.url), run: (nt) => go(h.url, nt) });
     }
   }
@@ -1242,6 +1438,7 @@ function renderCommandResults() {
   items.forEach((it, i) => {
     if (it.section !== lastSection) { box.appendChild(el('div', 'cmd-section', it.section)); lastSection = it.section; }
     const b = el('button', 'cmd-item' + (i === 0 ? ' selected' : ''));
+    b.style.setProperty('--i', Math.min(i, 10));
     const ic = el('span', 'ci-icon');
     if (it.icon) { const img = el('img'); img.src = it.icon; img.onerror = () => (ic.innerHTML = ICON.globe); ic.appendChild(img); }
     else ic.innerHTML = it.svg || ICON.globe;
@@ -1278,6 +1475,11 @@ function go(url, newTab) {
 }
 
 $('cmd-input').addEventListener('input', renderCommandResults);
+// Щелчок по странице не доходит до интерфейса браузера, поэтому закрываем строку, когда поле теряет фокус
+// (если фокус ушёл не на сам список подсказок)
+$('cmd-input').addEventListener('blur', () => {
+  setTimeout(() => { if (!$('cmdbar').contains(document.activeElement)) closeCommandBar(); }, 120);
+});
 $('cmd-input').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown') { e.preventDefault(); selectCmd(cmdIndex + 1); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); selectCmd(cmdIndex - 1); }
@@ -1442,6 +1644,7 @@ function toggleChat(force) {
   const chat = $('chat');
   chat.hidden = force === undefined ? !chat.hidden : !force;
   $('btn-chat').classList.toggle('on', !chat.hidden);
+  refitVisible(200);
   if (!chat.hidden) { loadGemini(); syncNotes(); syncPageChip(); }
 }
 
@@ -1567,7 +1770,8 @@ $('side-notes').addEventListener('input', (e) => {
 });
 
 // ---------- Перевод страниц ----------
-// Через Google Переводчик: страница открывается в переведённом виде на *.translate.goog
+// Перевод подменяет текст прямо на странице — вёрстка и вход на сайт сохраняются.
+// Переводит Google онлайн (отправляется только текст); без интернета — встроенный перевод macOS.
 
 const TR_DETECT = `(() => {
   const text = (document.body ? document.body.innerText : '').slice(0, 4000);
@@ -1576,12 +1780,120 @@ const TR_DETECT = `(() => {
   return { lang: document.documentElement.lang || '', letters: letters.length, cyr: cyr.length };
 })()`;
 
-function isTranslated(url) {
-  try { return new URL(url).hostname.endsWith('.translate.goog'); } catch { return false; }
+// Собирает ещё не переведённые текстовые узлы страницы и запоминает оригиналы
+const TR_COLLECT = `(() => {
+  const L = window.__luchTr || (window.__luchTr = { nodes: [], orig: [], applied: [], seen: new WeakSet() });
+  const skip = /^(SCRIPT|STYLE|NOSCRIPT|CODE|PRE|TEXTAREA|SVG|KBD|SAMP|VAR)$/;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      const t = n.nodeValue.trim();
+      if (t.length < 2 || !/\\p{L}/u.test(t) || L.seen.has(n)) return NodeFilter.FILTER_REJECT;
+      for (let p = n.parentElement; p; p = p.parentElement) {
+        // translate="no" на всей странице (html/body) не учитываем: перевод включил сам пользователь;
+        // на отдельных элементах (код, названия) — соблюдаем
+        const noTranslate = p.getAttribute('translate') === 'no' && p !== document.documentElement && p !== document.body;
+        if (skip.test(p.tagName) || p.isContentEditable || noTranslate) return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const out = [];
+  // Сайт мог сам вернуть оригинальный текст в уже переведённый узел (перерисовка после загрузки) —
+  // такие узлы переводим заново
+  L.nodes.forEach((node, i) => {
+    if (L.applied[i] !== undefined && node.isConnected && node.nodeValue !== L.applied[i]) {
+      L.orig[i] = node.nodeValue;
+      L.applied[i] = undefined;
+      const t = node.nodeValue.trim();
+      if (t.length > 1) out.push({ i, t });
+    }
+  });
+  let n;
+  while ((n = walker.nextNode()) && out.length < 3000) {
+    L.seen.add(n);
+    out.push({ i: L.nodes.length, t: n.nodeValue.trim() });
+    L.nodes.push(n);
+    L.orig.push(n.nodeValue);
+  }
+  return out;
+})()`;
+
+const trApply = (items) => `(() => {
+  const L = window.__luchTr;
+  if (!L) return;
+  L.shrunk = L.shrunk || new Map();
+  const list = ${JSON.stringify(items)};
+  // Запоминаем высоту коротких блоков (заголовки, кнопки, меню) до замены текста
+  const blocks = new Map();
+  for (const { i } of list) {
+    const el = L.nodes[i] && L.nodes[i].parentElement;
+    if (!el || blocks.has(el) || L.shrunk.has(el)) continue;
+    if ((el.textContent || '').length > 140) continue;
+    blocks.set(el, el.getBoundingClientRect().height);
+  }
+  for (const { i, t } of list) {
+    const n = L.nodes[i], o = L.orig[i];
+    if (n && n.isConnected) { n.nodeValue = o.replace(o.trim(), t); L.applied[i] = n.nodeValue; }
+  }
+  // Русский текст длиннее английского: если блок вырос и может наехать на соседей,
+  // немного уменьшаем шрифт (не больше чем на 25%), пока текст не влезет в прежнюю высоту
+  for (const [el, before] of blocks) {
+    if (!before) continue;
+    let h = el.getBoundingClientRect().height;
+    if (h <= before + 2) continue;
+    const original = el.style.fontSize;
+    const base = parseFloat(getComputedStyle(el).fontSize);
+    let size = base;
+    while (h > before + 2 && size > base * 0.75) {
+      size = Math.max(base * 0.75, size * 0.92);
+      el.style.fontSize = size + 'px';
+      h = el.getBoundingClientRect().height;
+    }
+    L.shrunk.set(el, original);
+  }
+})()`;
+
+const TR_RESTORE = `(() => {
+  const L = window.__luchTr;
+  if (L) {
+    L.nodes.forEach((n, i) => { if (n.isConnected) n.nodeValue = L.orig[i]; });
+    if (L.shrunk) L.shrunk.forEach((size, el) => { el.style.fontSize = size; });
+  }
+  window.__luchTr = null;
+})()`;
+
+// Названия языков в двух падежах: «с английского» и «на английский»
+const LANG_FROM = {
+  en: 'английского', ru: 'русского', uk: 'украинского', kk: 'казахского', de: 'немецкого', fr: 'французского',
+  es: 'испанского', it: 'итальянского', pt: 'португальского', zh: 'китайского', ja: 'японского', ko: 'корейского',
+  tr: 'турецкого', pl: 'польского', nl: 'нидерландского', ar: 'арабского', hi: 'хинди', th: 'тайского', vi: 'вьетнамского',
+  id: 'индонезийского', hr: 'хорватского', lv: 'латышского', lt: 'литовского', et: 'эстонского', cs: 'чешского',
+};
+const LANG_TO = {
+  en: 'английский', ru: 'русский', uk: 'украинский', kk: 'казахский', de: 'немецкий', fr: 'французский',
+  es: 'испанский', it: 'итальянский', pt: 'португальский', zh: 'китайский', ja: 'японский', ko: 'корейский',
+};
+const langFrom = (code) => LANG_FROM[code] || `языка «${code}»`;
+const langTo = (code) => LANG_TO[code] || `язык «${code}»`;
+
+// Язык всей страницы: сначала атрибут lang, иначе определяем по большому куску текста
+async function pageLanguage(tab) {
+  const d = await tab.webview.executeJavaScript(`({ lang: (document.documentElement.lang || '').toLowerCase(), sample: (document.body ? document.body.innerText : '').slice(0, 6000) })`);
+  const code = d.lang.split(/[-_]/)[0];
+  if (/^[a-z]{2,3}$/.test(code)) return code;
+  return window.luch.translateDetect(d.sample, '');
 }
 
-function translateUrl(url) {
-  return `https://translate.google.com/translate?sl=auto&tl=${settings().translateTo}&hl=ru&u=` + encodeURIComponent(url);
+function chunk(items) {
+  const out = [];
+  let cur = [], size = 0;
+  for (const it of items) {
+    if (cur.length && (cur.length >= 60 || size + it.t.length > 5000)) { out.push(cur); cur = []; size = 0; }
+    cur.push(it);
+    size += it.t.length;
+  }
+  if (cur.length) out.push(cur);
+  return out;
 }
 
 async function needsTranslation(tab) {
@@ -1597,30 +1909,192 @@ async function needsTranslation(tab) {
   }
 }
 
+// Переводит текст, который ещё не переводили; возвращает false, если перевод невозможен
+// Имена на странице: слова с большой буквы посреди предложения (Apple, Watch, Vision, Mac)
+// и название сайта из адреса. Пункты меню только из таких слов не переводим
+const PAGE_NAMES = `(() => {
+  // Слово — название, если посреди предложения оно с большой буквы хотя бы дважды
+  // и так пишется чаще, чем со строчной («Watch» у Apple — да, «Home» в меню — нет)
+  const cap = new Map(), low = new Map();
+  const text = (document.body ? document.body.innerText : '').slice(0, 60000);
+  for (const sentence of text.split(/[.!?\\n]+/)) {
+    const words = sentence.trim().split(/\\s+/);
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i].replace(/^[^\\p{L}\\d]+|[^\\p{L}\\d+]+$/gu, '');
+      if (!w) continue;
+      if (/^\\p{Ll}/u.test(w)) low.set(w, (low.get(w) || 0) + 1);
+      else if (i > 0 && /^\\p{Lu}[\\p{L}\\d+-]*$/u.test(w)) cap.set(w, (cap.get(w) || 0) + 1);
+    }
+  }
+  const names = [...cap].filter(([w, n]) => n >= 2 && n > (low.get(w.toLowerCase()) || 0)).map(([w]) => w);
+  const host = location.hostname.replace(/^www\\./, '').split('.')[0];
+  if (host) names.push(host[0].toUpperCase() + host.slice(1));
+  return names;
+})()`;
+
+// Слово выглядит как название продукта: iPad, AirPods, M6, 4K
+const productLike = (w) => /\p{Ll}\p{Lu}/u.test(w) || /\d/.test(w);
+const isShort = (t) => t.length <= 40 && t.split(/\s+/).length <= 4;
+
+function isProtected(text, names) {
+  const words = text.split(/\s+/).map(w => w.replace(/^[^\p{L}\d]+|[^\p{L}\d+]+$/gu, '')).filter(Boolean);
+  return isShort(text) && words.length > 0 && words.every(w => names.has(w) || productLike(w));
+}
+
+// Короткие соседние пункты (меню, кнопки) отправляем одним блоком через перенос строки,
+// чтобы переводчик видел смысл: «Home» в меню — «Главная», а не «Дом»
+function buildUnits(items) {
+  const units = [];
+  let group = [];
+  const flush = () => {
+    if (group.length === 1) units.push({ items: group, text: group[0].t });
+    else if (group.length) units.push({ items: group, text: group.map(it => it.t).join('\n') });
+    group = [];
+  };
+  for (const it of items) {
+    if (isShort(it.t) && !it.t.includes('\n')) {
+      group.push(it);
+      if (group.length >= 25) flush();
+    } else {
+      flush();
+      units.push({ items: [it], text: it.t });
+    }
+  }
+  flush();
+  return units;
+}
+
+async function translateNodes(tab, { auto = false } = {}) {
+  const url = tab.url;
+  const tl = settings().translateTo;
+  if (!tab.trSource || tab.trSourceUrl !== url) {
+    tab.trSource = await pageLanguage(tab);
+    tab.trSourceUrl = url;
+    // В немецком все существительные с большой буквы — там по регистру имена не отличить
+    tab.trNames = new Set(tab.trSource === 'de' ? [] : await tab.webview.executeJavaScript(PAGE_NAMES).catch(() => []));
+  }
+  const source = tab.trSource;
+  if (source === tl) return false;
+  const names = tab.trNames || new Set();
+  const items = (await tab.webview.executeJavaScript(TR_COLLECT)).filter(it => !isProtected(it.t, names));
+  const engine = settings().translateEngine;
+  const doBatch = async (batch) => {
+    if (tab.url !== url || !tab.webview) return false;
+    const units = buildUnits(batch);
+    const call = () => window.luch.translateTexts(units.map(u => u.text), tl, source, engine);
+    let res = await call();
+    if (res.error === 'not-installed') {
+      // Языковой пакет не скачан: при ручном переводе предлагаем скачать через системный диалог macOS
+      if (auto) return false;
+      if (!confirm(`Чтобы переводить с ${langFrom(res.source)} на ${langTo(tl)}, macOS нужно один раз скачать языковой пакет. Скачать сейчас?`)) return false;
+      showNotice(`Скачивается языковой пакет: ${LANG_TO[res.source] || res.source} → ${langTo(tl)}… Подтвердите загрузку в окне macOS.`);
+      const ok = await window.luch.translatePrepare(res.source, tl);
+      showNotice(ok ? 'Языковой пакет скачан, переводим страницу' : 'Языковой пакет не скачан', { done: true });
+      if (!ok) return false;
+      res = await call();
+    }
+    if (res.error === 'unsupported') {
+      if (!auto) alert(`Встроенный перевод macOS пока не умеет переводить с ${langFrom(res.source)} на ${langTo(tl)}.`);
+      return false;
+    }
+    if (res.error) {
+      if (!auto) alert('Не удалось перевести страницу: ' + res.error);
+      return false;
+    }
+    // Раскладываем перевод блоков обратно по пунктам; если строки не совпали по числу —
+    // переводим такой блок по одному пункту
+    const applied = [];
+    for (let k = 0; k < units.length; k++) {
+      const u = units[k];
+      const out = String(res.translations[k] ?? '');
+      if (u.items.length === 1) { applied.push({ i: u.items[0].i, t: out }); continue; }
+      const parts = out.split('\n');
+      if (parts.length === u.items.length) {
+        u.items.forEach((it, j) => applied.push({ i: it.i, t: parts[j].trim() || it.t }));
+      } else {
+        const single = await window.luch.translateTexts(u.items.map(it => it.t), tl, source, engine);
+        if (!single.error) u.items.forEach((it, j) => applied.push({ i: it.i, t: single.translations[j] }));
+      }
+    }
+    await tab.webview.executeJavaScript(trApply(applied));
+    return true;
+  };
+
+  // Первую часть переводим отдельно: если не хватает языкового пакета, вопрос о загрузке будет один.
+  // Остальные части онлайн отправляем по 4 одновременно — так длинные страницы переводятся быстрее
+  const batches = chunk(items);
+  if (!batches.length) return true;
+  if (!(await doBatch(batches[0]))) return false;
+  const queue = batches.slice(1);
+  let ok = true;
+  const worker = async () => {
+    while (ok && queue.length) {
+      if (!(await doBatch(queue.shift()))) ok = false;
+    }
+  };
+  await Promise.all(Array.from({ length: engine === 'online' ? 4 : 1 }, worker));
+  return ok;
+}
+
+// Сайты, которые пользователь перевёл: их страницы переводятся сами до «Показать оригинал»
+const translateHosts = new Set();
+
+async function translateTab(tab, { auto = false } = {}) {
+  if (!tab?.webview || !/^https?:/.test(tab.url) || tab.translating) return;
+  tab.translating = true;
+  syncTranslate();
+  try {
+    if (await translateNodes(tab, { auto })) {
+      tab.translated = true;
+      translateHosts.add(hostOf(tab.url));
+      // Сайты подгружают текст по ходу прокрутки — переводим новые куски
+      clearInterval(tab.trTimer);
+      tab.trTimer = setInterval(() => {
+        if (!tab.translated || !tab.webview || tab.translating) return;
+        tab.translating = true;
+        translateNodes(tab, { auto: true }).catch(() => {}).finally(() => { tab.translating = false; });
+      }, 1500);
+    }
+  } catch {}
+  tab.translating = false;
+  syncTranslate();
+}
+
+function stopTranslation(tab) {
+  clearInterval(tab.trTimer);
+  tab.trTimer = null;
+  tab.translated = false;
+}
+
+async function restoreTab(tab) {
+  stopTranslation(tab);
+  translateHosts.delete(hostOf(tab.url));
+  try { await tab.webview.executeJavaScript(TR_RESTORE); } catch {}
+  tab.showOriginal = tab.url;
+  syncTranslate();
+}
+
 function toggleTranslate(tab = activeTab()) {
   if (!tab?.webview || tab.url === NEW_TAB_URL) return;
-  if (isTranslated(tab.url)) {
-    tab.showOriginal = originalUrl(tab.url);
-    tab.webview.loadURL(tab.showOriginal);
-  } else if (/^https?:/.test(tab.url)) {
-    tab.webview.loadURL(translateUrl(tab.url));
-  }
+  if (tab.translated) restoreTab(tab);
+  else translateTab(tab);
 }
 
 function syncTranslate() {
   const t = activeTab();
   const btn = $('btn-translate');
-  const on = Boolean(t && isTranslated(t.url));
   btn.disabled = !t || !/^https?:/.test(t.url);
-  btn.classList.toggle('on', on);
-  btn.title = on ? 'Показать оригинал' : 'Перевести страницу (⌘⇧Y)';
+  btn.classList.toggle('on', Boolean(t?.translated));
+  btn.classList.toggle('busy', Boolean(t?.translating));
+  btn.title = t?.translating ? 'Перевожу…' : t?.translated ? 'Показать оригинал' : 'Перевести страницу (⌘⇧Y)';
 }
 
 async function autoTranslate(tab) {
-  if (!store.get('autoTranslate', false) || !tab.webview || !/^https?:/.test(tab.url)) return;
-  if (isTranslated(tab.url) || /(^|\.)google\.[a-z.]+$/.test(hostOf(tab.url))) return;
-  if (tab.showOriginal === tab.url) return;
-  if (await needsTranslation(tab)) toggleTranslate(tab);
+  if (!tab.webview || !/^https?:/.test(tab.url)) return;
+  if (tab.translated || tab.translating || tab.showOriginal === tab.url) return;
+  const siteOn = translateHosts.has(hostOf(tab.url));
+  if (!siteOn && !store.get('autoTranslate', false)) return;
+  if (await needsTranslation(tab)) translateTab(tab, { auto: true });
 }
 
 $('btn-translate').onclick = () => toggleTranslate();
@@ -1628,7 +2102,7 @@ $('btn-translate').addEventListener('contextmenu', async (e) => {
   e.preventDefault();
   const on = store.get('autoTranslate', false);
   const choice = await window.luch.menu([
-    { id: 'now', label: isTranslated(activeTab()?.url) ? 'Показать оригинал' : 'Перевести эту страницу' },
+    { id: 'now', label: activeTab()?.translated ? 'Показать оригинал' : 'Перевести эту страницу' },
     { type: 'separator' },
     { id: 'auto', label: 'Переводить автоматически', checked: on },
   ]);
@@ -1701,7 +2175,7 @@ setInterval(() => {
 
 const SECTION_TITLES = {
   general: 'Основные', tabs: 'Вкладки', privacy: 'Конфиденциальность', spaces: 'Пространства',
-  extensions: 'Расширения', skills: 'Скиллы Gemini', translate: 'Перевод', shortcuts: 'Сочетания клавиш', data: 'Данные',
+  extensions: 'Расширения', skills: 'Скиллы Gemini', translate: 'Перевод', shortcuts: 'Сочетания клавиш', import: 'Импорт', data: 'Данные',
 };
 
 async function openSettings(section = 'general') {
@@ -1710,10 +2184,12 @@ async function openSettings(section = 'general') {
   $('set-theme').value = s.theme;
   $('set-restore').checked = s.restore;
   $('set-new-top').checked = s.newTabsTop;
+  $('set-auto-fit').checked = s.autoFit;
   $('set-autohide').checked = s.autohide;
   $('set-cmd-groups').checked = s.cmdClickGroups;
   $('set-cleanup').value = String(s.cleanupHours);
   $('set-translate-to').value = s.translateTo;
+  $('set-translate-engine').value = s.translateEngine;
   $('set-auto-translate').checked = store.get('autoTranslate', false);
   const prefs = await window.luch.prefs();
   $('set-block-ads').checked = prefs.blockAds;
@@ -1824,7 +2300,8 @@ const SHORTCUTS = [
   ['Командная строка', '⌘L'], ['Новая вкладка', '⌘T'], ['Закрыть вкладку', '⌘W'], ['Вернуть закрытую вкладку', '⇧⌘T'],
   ['Поиск по вкладкам', '⇧⌘A'], ['Закрепить вкладку', '⌘D'], ['Новая группа с вкладкой', '⌥⌘N'], ['Очистить вкладки', '⇧⌘K'],
   ['Чат с Gemini', '⌘E'], ['Перевести страницу', '⇧⌘Y'], ['Показать или скрыть вкладки', '⌘S'], ['Автоскрытие вкладок', '⌥⌘S'],
-  ['Разделить экран', '⇧⌘='], ['Переключить панель', '⌥⌘] / ⌥⌘['], ['Убрать разделение', '⇧⌘−'],
+  ['Разделить экран', '⌥⌘='], ['Переключить панель', '⌥⌘] / ⌥⌘['], ['Убрать разделение', '⌥⌘−'],
+  ['Масштаб: больше / меньше / 100%', '⌘+ / ⌘− / ⌘0 (или ⌃)'],
   ['Копировать адрес', '⇧⌘C'], ['Копировать как Markdown', '⌥⇧⌘C'], ['Найти на странице', '⌘F'],
   ['История', '⌘Y'], ['Загрузки', '⌥⌘L'], ['Окно инкогнито', '⇧⌘N'], ['Пространство 1…9', '⌃1…⌃9'], ['Вкладка 1…9', '⌘1…⌘9'],
 ];
@@ -1842,27 +2319,18 @@ $('set-search').onchange = (e) => setSetting('search', e.target.value);
 $('set-theme').onchange = (e) => { setSetting('theme', e.target.value); window.luch.setTheme(e.target.value); };
 $('set-restore').onchange = (e) => setSetting('restore', e.target.checked);
 $('set-new-top').onchange = (e) => setSetting('newTabsTop', e.target.checked);
+$('set-auto-fit').onchange = (e) => { setSetting('autoFit', e.target.checked); for (const t of tabs) if (t.webview) autoFit(t); };
 $('set-autohide').onchange = (e) => { setSetting('autohide', e.target.checked); applyAutohide(); };
 $('set-cmd-groups').onchange = (e) => setSetting('cmdClickGroups', e.target.checked);
 $('set-cleanup').onchange = (e) => setSetting('cleanupHours', Number(e.target.value));
 $('set-translate-to').onchange = (e) => setSetting('translateTo', e.target.value);
+$('set-translate-engine').onchange = (e) => setSetting('translateEngine', e.target.value);
 $('set-auto-translate').onchange = (e) => store.set('autoTranslate', e.target.checked);
 $('set-block-ads').onchange = (e) => window.luch.setPrefs({ blockAds: e.target.checked });
 $('set-block-trackers').onchange = (e) => window.luch.setPrefs({ blockTrackers: e.target.checked });
 $('set-block-cookies').onchange = (e) => window.luch.setPrefs({ blockCookieBanners: e.target.checked });
 $('set-space-add').onclick = () => { closeSettings(); openSpaceEditor(null); };
 
-function addPinFromSettings() {
-  const input = $('set-pin-url');
-  const text = input.value.trim();
-  if (!text || !looksLikeUrl(text)) return;
-  const url = toUrl(text);
-  if (!getPins().some(p => hostOf(p.url) === hostOf(url))) toggleFavorite(url, hostOf(url));
-  input.value = '';
-  renderSettingsPins();
-}
-$('set-pin-add').onclick = addPinFromSettings;
-$('set-pin-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') addPinFromSettings(); });
 
 for (const b of document.querySelectorAll('[data-clear]')) {
   b.onclick = async () => {
@@ -1892,7 +2360,138 @@ document.addEventListener('keydown', (e) => {
   closePopovers();
 });
 $('btn-settings').onclick = () => openSettings();
-window.luch.version().then(v => { $('set-version').textContent = `Луч ${v.app} · Chromium ${v.chrome}`; });
+window.luch.version().then(v => { $('set-version').textContent = `Luch ${v.app} · Chromium ${v.chrome}`; });
+
+// ---------- Первое открытие и перенос из других браузеров ----------
+
+const W_WHAT = { bookmarks: 'Закладки', history: 'История', cookies: 'Входы на сайты' };
+
+let welcomeBrowsers = [];
+
+async function showWelcome({ skipIntro = false } = {}) {
+  const w = $('welcome');
+  closeSettings();
+  w.hidden = false;
+  w.classList.remove('leaving', 'step2');
+  $('w-import').hidden = true;
+  $('w-progress').hidden = true;
+  // Вступление идёт на весь экран; к импорту переходим только по кнопке «Начать»
+  if (!skipIntro) window.luch.setFullscreen(true);
+  welcomeBrowsers = await window.luch.importDetect().catch(() => []);
+  renderImportBrowsers(welcomeBrowsers);
+  if (skipIntro) openImportStep();
+}
+
+function openImportStep() {
+  $('welcome').classList.add('step2');
+  if (welcomeBrowsers.length) $('w-import').hidden = false;
+  else finishWelcome();
+}
+
+function renderImportBrowsers(browsers) {
+  const box = $('w-browsers');
+  box.innerHTML = '';
+  if (!browsers.length) { box.appendChild(el('div', 'w-empty', 'Других браузеров на этом Mac не найдено.')); return; }
+  for (const b of browsers) {
+    const row = el('label', 'w-browser on');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.dataset.browser = b.id;
+    cb.onchange = () => row.classList.toggle('on', cb.checked);
+    row.append(cb, el('span', 'w-bname', b.name));
+    // Если у браузера несколько профилей — даём выбрать нужный
+    const sel = el('select');
+    for (const p of b.profiles) { const o = el('option', null, p.name); o.value = p.id; sel.appendChild(o); }
+    sel.hidden = b.profiles.length < 2;
+    row.appendChild(sel);
+    row.dataset.name = b.name;
+    box.appendChild(row);
+  }
+}
+
+function finishWelcome() {
+  store.set('onboarded', true);
+  window.luch.setFullscreen(false);
+  const w = $('welcome');
+  w.classList.add('leaving');
+  setTimeout(() => { w.hidden = true; w.classList.remove('leaving'); }, 600);
+}
+
+async function runImports() {
+  const what = { bookmarks: $('w-bookmarks').checked, history: $('w-history').checked, cookies: $('w-cookies').checked };
+  const picked = [...$('w-browsers').querySelectorAll('.w-browser')]
+    .filter(row => row.querySelector('input').checked)
+    .map(row => ({ id: row.querySelector('input').dataset.browser, name: row.dataset.name, profile: row.querySelector('select').value }));
+  if (!picked.length || !Object.values(what).some(Boolean)) { finishWelcome(); return; }
+
+  $('w-import').hidden = true;
+  $('w-progress').hidden = false;
+  $('w-done').hidden = true;
+  $('w-progress-title').textContent = 'Переносим данные…';
+  const log = $('w-log');
+  log.innerHTML = '';
+  let total = { history: 0, bookmarks: 0, cookies: 0 };
+
+  // Браузеры переносим по очереди: macOS спрашивает доступ к ключу каждого отдельно
+  for (const b of picked) {
+    const line = el('div', 'w-line');
+    line.append(el('span', 'w-spin'), el('span', null, b.name));
+    log.appendChild(line);
+    try {
+      const r = await window.luch.importRun({ browser: b.id, profile: b.profile, what, partition: partitionFor(currentSpace) });
+      mergeImportedHistory(r.history);
+      addImportedBookmarks(b.name, r.bookmarks);
+      total.history += r.history.length;
+      total.bookmarks += r.bookmarks.length;
+      total.cookies += r.cookies;
+      line.firstChild.replaceWith(el('span', 'w-ok', '✓'));
+      const parts = [];
+      if (what.bookmarks) parts.push(`закладок: ${r.bookmarks.length}`);
+      if (what.history) parts.push(`история: ${r.history.length}`);
+      if (what.cookies) parts.push(`входов: ${r.cookies}`);
+      line.appendChild(el('span', null, '— ' + parts.join(', ')));
+      for (const err of r.errors) line.appendChild(el('span', 'w-err', err));
+    } catch (err) {
+      line.firstChild.replaceWith(el('span', 'w-err', '✕'));
+      line.appendChild(el('span', 'w-err', String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')));
+    }
+  }
+  $('w-progress-title').textContent = 'Готово';
+  $('w-done').hidden = false;
+  $('w-done').focus();
+}
+
+function mergeImportedHistory(items) {
+  if (!items?.length) return;
+  const seen = new Set();
+  const merged = [...getHistory(), ...items]
+    .sort((a, b) => b.ts - a.ts)
+    .filter(h => !seen.has(h.url) && seen.add(h.url))
+    .slice(0, 5000);
+  store.set('history', merged);
+}
+
+// Закладки каждого браузера ложатся в свою папку среди закреплённых (свёрнутую, чтобы не мешала)
+function addImportedBookmarks(browserName, items) {
+  if (!items?.length) return;
+  const folder = { id: uid('f'), type: 'folder', name: `Закладки · ${browserName}`, open: false, items: [] };
+  const seen = new Set();
+  for (const b of items) {
+    if (seen.has(b.url)) continue;
+    seen.add(b.url);
+    folder.items.push({ id: uid('p'), type: 'tab', url: b.url, title: b.title });
+  }
+  pinnedList().push(folder);
+  savePinned();
+  renderTabs();
+}
+
+$('w-go').onclick = runImports;
+$('w-skip').onclick = finishWelcome;
+$('w-done').onclick = finishWelcome;
+$('w-start').onclick = openImportStep;
+$('set-import').onclick = () => showWelcome({ skipIntro: true });
 
 // ---------- Кнопки и команды меню ----------
 
@@ -1900,6 +2499,7 @@ function toggleTabbar() {
   if (settings().autohide) { document.body.classList.toggle('peek'); return; }
   document.body.classList.toggle('collapsed');
   store.set('collapsed', document.body.classList.contains('collapsed'));
+  refitVisible(280); // после анимации колонки
 }
 
 function openFromPage(url, opts = {}) {
@@ -1928,7 +2528,76 @@ function cleanTabs() {
 
 $('btn-collapse').onclick = toggleTabbar;
 $('btn-new').onclick = () => createTab();
-$('btn-pin').onclick = () => { const t = activeTab(); if (t) toggleFavorite(t.url, tabTitle(t)); };
+
+// ---------- Подгонка ширины сайта под окно ----------
+// Некоторые сайты задают минимальную ширину (Chrome Web Store — 1280 px) и не помещаются,
+// когда рядом колонка вкладок. В оконном режиме уменьшаем масштаб ровно настолько, чтобы сайт влез.
+
+let isFullscreen = false;
+const MIN_FIT = 0.5;
+
+async function autoFit(tab) {
+  const wv = tab?.webview;
+  if (!wv || !tab.wcId || tab.userZoom || !/^https?:/.test(tab.url)) return;
+  const off = !settings().autoFit || isFullscreen;
+  if (off) {
+    if (tab.fitted) { tab.fitted = false; wv.setZoomFactor(1); }
+    return;
+  }
+  const avail = wv.clientWidth;
+  if (!avail) return;
+  const measure = () => wv.executeJavaScript('({ s: document.documentElement.scrollWidth, c: document.documentElement.clientWidth })');
+  let size;
+  try {
+    // Страница уже уменьшена, а нужная ей ширина неизвестна — на мгновение возвращаем 100% и меряем
+    if (!tab.minWidth && wv.getZoomFactor() < 0.99) {
+      wv.setZoomFactor(1);
+      await new Promise(r => setTimeout(r, 120));
+    }
+    size = await measure();
+  } catch { return; }
+  // Ширина, которая нужна сайту в CSS-пикселях; запоминаем максимум, чтобы при расширении окна вернуть масштаб
+  if (size.s > size.c + 2) tab.minWidth = Math.max(tab.minWidth || 0, size.s);
+  if (!tab.minWidth) {
+    if (tab.fitted) { tab.fitted = false; wv.setZoomFactor(1); }
+    return;
+  }
+  const factor = Math.max(MIN_FIT, Math.min(1, avail / tab.minWidth));
+  if (Math.abs(factor - wv.getZoomFactor()) < 0.01) return;
+  tab.fitted = factor < 1;
+  wv.setZoomFactor(factor);
+}
+
+// Перепроверяем видимые вкладки, когда меняется место под страницу (окно, колонка, чат, разделение)
+let fitTimer = null;
+function refitVisible(delay = 150) {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(() => {
+    for (const t of tabs) if (t.webview && !t.webview.classList.contains('hidden')) autoFit(t);
+  }, delay);
+}
+new ResizeObserver(() => refitVisible()).observe(viewsEl);
+window.addEventListener('resize', () => refitVisible());
+
+// Плашка справа сверху: висит, пока идёт долгое действие, и гаснет после него
+let noticeTimer = null;
+function showNotice(text, { done = false } = {}) {
+  const el = $('notice');
+  $('notice-text').textContent = text;
+  el.classList.toggle('done', done);
+  el.hidden = false;
+  clearTimeout(noticeTimer);
+  if (done) noticeTimer = setTimeout(() => (el.hidden = true), 3000);
+}
+
+let zoomToastTimer = null;
+function showZoomToast(percent) {
+  const el = $('zoom-toast');
+  el.textContent = percent + '%';
+  el.hidden = false;
+  clearTimeout(zoomToastTimer);
+  zoomToastTimer = setTimeout(() => (el.hidden = true), 1200);
+}
 
 // Открытые закреплённые вкладки по порядку — для переключения ⌥⌘↑/↓
 function pinnedOrder() {
@@ -1970,7 +2639,14 @@ const commands = {
   'zoom': (delta) => {
     const wv = activeTab()?.webview;
     if (!wv) return;
-    wv.setZoomLevel(delta === 0 ? 0 : wv.getZoomLevel() + delta);
+    // Уровень 0 = 100%; шаг 0.5 ≈ 10%. Ограничиваем от 25% до 500%, как в Chrome
+    const level = delta === 0 ? 0 : Math.max(-7.5, Math.min(8.8, wv.getZoomLevel() + delta));
+    const t = activeTab();
+    // Ручной масштаб важнее подгонки; ⌘0 возвращает автоматический режим
+    t.userZoom = delta !== 0;
+    wv.setZoomLevel(level);
+    showZoomToast(Math.round(Math.pow(1.2, level) * 100));
+    if (delta === 0) { t.fitted = false; autoFit(t); }
   },
   'devtools': () => activeTab()?.webview?.openDevTools(),
   'back': () => activeTab()?.webview?.goBack(),
@@ -1988,12 +2664,18 @@ const commands = {
   },
   'pin-tab': () => pinTab(activeTab()),
   'duplicate-tab': () => { const t = activeTab(); if (t && t.url !== NEW_TAB_URL) createTab(t.url, { after: t.pinnedId ? null : t, groupId: t.groupId }); },
+  'new-group': () => newGroup(),
+  'import': () => showWelcome({ skipIntro: true }),
   'group-tab': () => { const t = activeTab(); if (t && !t.pinnedId) renameGroupLater(newGroupWith(t)); },
   'rename-tab': () => { const t = activeTab(); if (t) renameTab(t); },
   'mute-tab': () => { const t = activeTab(); if (t) toggleMute(t); },
   'history': openHistory,
   'downloads': () => { if (settings().autohide) document.body.classList.add('peek'); openDownloads(); },
   'settings': (section) => openSettings(typeof section === 'string' ? section : 'general'),
+  'fullscreen': (on) => {
+    isFullscreen = on;
+    for (const t of tabs) if (t.webview) autoFit(t);
+  },
   'select-space': (i) => { if (spaces[i]) setSpace(spaces[i].id); },
   'select-webcontents': (wcId) => { const t = tabByWc(wcId); if (t) activateTab(t.id); },
   'close-webcontents': (wcId) => { const t = tabByWc(wcId); if (t) closeTab(t.id); },
@@ -2028,4 +2710,6 @@ if (!INCOGNITO && settings().restore) {
   store.set('session', []);
 }
 cleanupGroups();
+trimFavorites();
 setSpace(currentSpace);
+if (!INCOGNITO && !store.get('onboarded', false)) showWelcome();

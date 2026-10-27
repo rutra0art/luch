@@ -106,7 +106,7 @@
         <li data-q="Напиши вежливое письмо коллеге с просьбой перенести встречу на завтра."><svg viewBox="0 0 16 16"><path d="M2.5 4.5h11v7h-11zM2.5 4.5L8 9l5.5-4.5"/></svg>Напиши письмо о переносе встречи</li>
       </ul>
       <div class="hint">
-        <span><kbd>Enter</kbd> спросить Gemini · <kbd>⌘Enter</kbd> искать в интернете</span>
+        <span><kbd>Enter</kbd> искать в интернете · <kbd>⌘Enter</kbd> спросить Gemini</span>
         <button class="go" type="submit" title="Найти">
           <svg viewBox="0 0 16 16"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
         </button>
@@ -124,12 +124,13 @@
     // Вопросы передаются браузеру, который открывает панель Gemini
     const ask = (text) => console.log('luch:ask:' + text);
 
-    function go(searchOnly) {
+    // Enter — открыть сайт или искать в интернете, ⌘Enter — спросить Gemini
+    function go(askGemini) {
       const text = q.value.trim();
       if (!text) return;
-      if (isUrl(text)) location.href = /^[a-z]+:/i.test(text) ? text : 'https://' + text;
-      else if (searchOnly) console.log('luch:search:' + text);
-      else { ask(text); q.value = ''; form.classList.remove('typing'); }
+      if (askGemini) { ask(text); q.value = ''; form.classList.remove('typing'); }
+      else if (isUrl(text)) location.href = /^[a-z]+:/i.test(text) ? text : 'https://' + text;
+      else console.log('luch:search:' + text);
     }
     form.addEventListener('submit', (e) => { e.preventDefault(); go(false); });
     q.addEventListener('keydown', (e) => {
