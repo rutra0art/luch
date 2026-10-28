@@ -2090,6 +2090,39 @@ index c25e90af7d..926e42a2cf 100644
    if (!cookie_manager) {
      return RespondNow(Error(std::move(error)));
    }
+diff --git a/extensions/browser/service_worker/service_worker_task_queue.cc b/extensions/browser/service_worker/service_worker_task_queue.cc
+index a570f3682a..5b349dfe3f 100644
+--- a/extensions/browser/service_worker/service_worker_task_queue.cc
++++ b/extensions/browser/service_worker/service_worker_task_queue.cc
+@@ -433,6 +433,28 @@ void ServiceWorkerTaskQueue::ActivateExtension(const Extension* extension) {
+     return;
+   }
+ 
++  // Luch: встроенное расширение загружается из папки внутри Luch.app, и при
++  // обновлении Luch оно не выгружается, как обновлённое из магазина. Повторная
++  // регистрация того же background.js по правилам service worker ничего не
++  // меняет, и работал бы старый код. Поэтому при смене версии старая
++  // регистрация сначала удаляется; RegisterServiceWorker дождётся этого через
++  // pending_unregistrations_.
++  if (version.IsValid() &&
++      extension_id == "amllkaplhiohpdnbaglpilidkdafnpbl") {
++    pending_unregistrations_.insert(extension_id);
++    service_worker_context->UnregisterServiceWorkerImmediately(
++        extension->url(),
++        blink::StorageKey::CreateFirstParty(extension->origin()),
++        base::BindOnce(
++            [](base::WeakPtr<ServiceWorkerTaskQueue> queue,
++               const ExtensionId& id, blink::ServiceWorkerStatusCode) {
++              if (queue) {
++                queue->pending_unregistrations_.erase(id);
++              }
++            },
++            weak_factory_.GetWeakPtr(), extension_id));
++  }
++
+   RegisterServiceWorker(RegistrationReason::REGISTER_ON_EXTENSION_LOAD,
+                         context_id, *extension);
+ }
 diff --git a/extensions/common/api/_permission_features.json b/extensions/common/api/_permission_features.json
 index 4edc2b650b..dff7a5872e 100644
 --- a/extensions/common/api/_permission_features.json
