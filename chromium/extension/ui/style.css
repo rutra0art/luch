@@ -273,6 +273,9 @@ body.dragging #pinned:empty.drop-target { border-color: var(--accent); }
   display: flex; align-items: center; justify-content: center; gap: 4px; position: relative;
 }
 .tabbar-foot #btn-add-space { position: absolute; right: 0; color: var(--muted); }
+.update-badge { margin: 0 10px 8px; padding: 7px 10px; border: 0; border-radius: 8px; background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 600; text-align: left; }
+.update-badge:hover { filter: brightness(1.1); }
 .tabbar-foot #btn-settings { position: absolute; left: 0; color: var(--muted); }
 #spaces { display: flex; gap: 2px; }
 .space-dot { width: 20px; height: 20px; border: 0; padding: 0; border-radius: 6px; background: transparent; display: grid; place-items: center; }
@@ -529,6 +532,12 @@ kbd { font: 11px -apple-system, sans-serif; padding: 1px 5px; border: 1px solid 
 #space-editor { width: 300px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .pop-title { font-weight: 600; }
 .pop-note { margin: 0; font-size: 11px; color: var(--muted); }
+.pop-check { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+/* Закрытое пространство: точка-кольцо и замок у названия */
+.space-dot.private::after { background: transparent; box-shadow: inset 0 0 0 1.5px var(--dot, var(--muted)); }
+#space-btn.private::before { content: ""; display: inline-block; width: 9px; height: 10px; margin-right: 6px; vertical-align: -1px;
+  background: currentColor; opacity: .7;
+  -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 9 10"><path d="M2 4V3a2.5 2.5 0 0 1 5 0v1h.5a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-.5.5h-6a.5.5 0 0 1-.5-.5v-5a.5.5 0 0 1 .5-.5zm1 0h3V3a1.5 1.5 0 0 0-3 0z"/></svg>') center / contain no-repeat; }
 #space-editor-name, #rename-input {
   height: 30px; padding: 0 10px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--bg-2); color: var(--text);

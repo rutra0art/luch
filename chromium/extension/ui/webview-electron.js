@@ -110,6 +110,7 @@
       ['link-split', 'Открыть рядом на разделённом экране', ['link']],
       ['ask', 'Спросить Gemini о «%s»', ['selection']],
       ['image-tab', 'Открыть картинку в новой вкладке', ['image']],
+      ['shot', 'Снимок страницы…', ['page']],
     ];
     for (const [id, title, contexts] of menuItems) wv.contextMenus.create({ id, title, contexts });
     wv.contextMenus.onClicked.addListener((info) => {
@@ -119,6 +120,7 @@
       else if (info.menuItemId === 'link-split') run('open-split', info.linkUrl);
       else if (info.menuItemId === 'ask') run('ask-selection', info.selectionText);
       else if (info.menuItemId === 'image-tab') run('open-url', info.srcUrl, { background: true });
+      else if (info.menuItemId === 'shot') run('screenshot');
     });
 
     // Пока вкладка видна, обновляем заголовок: сайты меняют его без перезагрузки (счётчики писем и т. п.)

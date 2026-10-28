@@ -1,8 +1,8 @@
 diff --git a/chrome/BUILD.gn b/chrome/BUILD.gn
-index 06bfcf5a90..1a78284cdb 100644
+index 06bfcf5a90..eb57a0c14c 100644
 --- a/chrome/BUILD.gn
 +++ b/chrome/BUILD.gn
-@@ -691,6 +691,52 @@ if (is_win) {
+@@ -691,6 +691,53 @@ if (is_win) {
      outputs = [ "{{bundle_resources_dir}}/{{source_file_part}}" ]
    }
  
@@ -27,6 +27,7 @@ index 06bfcf5a90..1a78284cdb 100644
 +      "browser/resources/luch_extension/ui/luch-api.js",
 +      "browser/resources/luch_extension/ui/newtab-page.js",
 +      "browser/resources/luch_extension/ui/newtab.html",
++      "browser/resources/luch_extension/ui/page-shot.js",
 +      "browser/resources/luch_extension/ui/space-theme.js",
 +      "browser/resources/luch_extension/ui/style.css",
 +      "browser/resources/luch_extension/ui/webview-electron.js",
@@ -55,7 +56,7 @@ index 06bfcf5a90..1a78284cdb 100644
    bundle_data("chrome_asset_catalog") {
      sources = [ "app/theme/$branding_path_component/mac/Assets.car" ]
      outputs = [ "{{bundle_resources_dir}}/{{source_file_part}}" ]
-@@ -706,6 +752,10 @@ if (is_win) {
+@@ -706,6 +753,10 @@ if (is_win) {
        ":chrome_app_icon",
        ":chrome_app_strings",
        ":chrome_asset_catalog",
@@ -2012,6 +2013,51 @@ index d897655aac..d48623ebdf 100644
      "channel": "trunk",
      "extension_types": ["extension", "platform_app"],
      "location": "component",
+diff --git a/components/guest_view/browser/guest_view_base.cc b/components/guest_view/browser/guest_view_base.cc
+index 8a4a676abc..b920de0076 100644
+--- a/components/guest_view/browser/guest_view_base.cc
++++ b/components/guest_view/browser/guest_view_base.cc
+@@ -1024,6 +1024,25 @@ bool GuestViewBase::ShouldFocusPageAfterCrash(content::WebContents* source) {
+   return false;
+ }
+ 
++// Luch: у гостевой страницы нет своего окна браузера, поэтому запрос
++// картинки в картинке передаётся делегату страницы-владельца (окна Luch).
++// Без этого requestPictureInPicture() во вкладках <webview> не работал.
++content::PictureInPictureResult GuestViewBase::EnterPictureInPicture(
++    content::WebContents* web_contents) {
++  content::WebContents* owner = owner_web_contents();
++  if (!owner || !owner->GetDelegate()) {
++    return content::PictureInPictureResult::kNotSupported;
++  }
++  return owner->GetDelegate()->EnterPictureInPicture(web_contents);
++}
++
++void GuestViewBase::ExitPictureInPicture() {
++  content::WebContents* owner = owner_web_contents();
++  if (owner && owner->GetDelegate()) {
++    owner->GetDelegate()->ExitPictureInPicture();
++  }
++}
++
+ void GuestViewBase::UpdatePreferredSize(WebContents* target_web_contents,
+                                         const gfx::Size& pref_size) {
+   CHECK(!base::FeatureList::IsEnabled(features::kGuestViewMPArch));
+diff --git a/components/guest_view/browser/guest_view_base.h b/components/guest_view/browser/guest_view_base.h
+index af81a4ef0c..57bbc73f8d 100644
+--- a/components/guest_view/browser/guest_view_base.h
++++ b/components/guest_view/browser/guest_view_base.h
+@@ -507,6 +507,10 @@ class GuestViewBase : public content::BrowserPluginGuestDelegate,
+                       scoped_refptr<content::FileSelectListener> listener,
+                       const blink::mojom::FileChooserParams& params) final;
+   bool ShouldFocusPageAfterCrash(content::WebContents* source) final;
++  // Luch: картинку в картинке открывает окно, в котором стоит <webview>
++  content::PictureInPictureResult EnterPictureInPicture(
++      content::WebContents* web_contents) final;
++  void ExitPictureInPicture() final;
+   void UpdatePreferredSize(content::WebContents* web_contents,
+                            const gfx::Size& pref_size) final;
+   void UpdateTargetURL(content::WebContents* source, const GURL& url) final;
 diff --git a/content/browser/renderer_host/navigator.cc b/content/browser/renderer_host/navigator.cc
 index fe8f886656..0c0573f75d 100644
 --- a/content/browser/renderer_host/navigator.cc

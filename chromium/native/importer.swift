@@ -7,6 +7,7 @@
 //   {"cmd":"detect"}                                  → {"type":"detect","browsers":[…]}
 //   {"cmd":"read","browser","profile","what":{…}}     → {"type":"history"|"bookmarks"|"cookies","items":[…]} частями,
 //                                                       {"type":"error","label","message"}, в конце {"type":"done"}
+//   {"cmd":"update","dmg","sha256"}                   → {"type":"update"}: установка новой версии Luch (см. update())
 import CommonCrypto
 import Foundation
 
@@ -294,10 +295,97 @@ func read(_ msg: [String: Any]) {
   }
 }
 
+// ---------- Обновление Luch ----------
+// {"cmd":"update","dmg":путь,"sha256":hex} → {"type":"update"} или {"type":"error"}.
+// Образ скачивает Luch из релиза на GitHub; помощник сверяет SHA-256, проверяет, что внутри
+// Luch с целой подписью, и кладёт его рядом со старым. Затем отдельный процесс закрывает
+// Luch, меняет приложения местами и запускает новое.
+
+struct UpdateError: LocalizedError {
+  let errorDescription: String?
+  init(_ text: String) { errorDescription = text }
+}
+
+func sha256(_ url: URL) throws -> String {
+  let handle = try FileHandle(forReadingFrom: url)
+  defer { try? handle.close() }
+  var ctx = CC_SHA256_CTX()
+  CC_SHA256_Init(&ctx)
+  while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+    chunk.withUnsafeBytes { _ = CC_SHA256_Update(&ctx, $0.baseAddress, CC_LONG(chunk.count)) }
+  }
+  var digest = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+  CC_SHA256_Final(&digest, &ctx)
+  return digest.map { String(format: "%02x", $0) }.joined()
+}
+
+// Процесс в своей сессии: Chromium закрывает помощника вместе с собой, а замена должна пережить выход Luch
+func spawnDetached(_ args: [String]) throws {
+  var attr: posix_spawnattr_t?
+  posix_spawnattr_init(&attr)
+  defer { posix_spawnattr_destroy(&attr) }
+  posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
+  var files: posix_spawn_file_actions_t?
+  posix_spawn_file_actions_init(&files)
+  defer { posix_spawn_file_actions_destroy(&files) }
+  // stdout помощника — канал сообщений Chromium, в него ничего постороннего писать нельзя
+  for fd: Int32 in [0, 1, 2] { posix_spawn_file_actions_addopen(&files, fd, "/dev/null", fd == 0 ? O_RDONLY : O_WRONLY, 0) }
+  var argv = args.map { strdup($0) } + [nil]
+  defer { argv.forEach { free($0) } }
+  var pid: pid_t = 0
+  guard posix_spawn(&pid, args[0], &files, &attr, &argv, environ) == 0 else { throw UpdateError("Не удалось запустить установку") }
+}
+
+func update(_ msg: [String: Any]) throws {
+  guard let dmgPath = msg["dmg"] as? String, let expected = (msg["sha256"] as? String)?.lowercased(), expected.count == 64 else {
+    throw UpdateError("Нет образа или его контрольной суммы")
+  }
+  let dmg = URL(fileURLWithPath: dmgPath)
+  guard try sha256(dmg) == expected else { throw UpdateError("Контрольная сумма образа не совпадает с релизом на GitHub") }
+
+  // Помощник лежит в Luch.app/Contents/Resources
+  let app = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+  guard app.pathExtension == "app" else { throw UpdateError("Не найдено приложение Luch") }
+
+  let mount = FileManager.default.temporaryDirectory.appendingPathComponent("luch-update-\(UUID().uuidString)")
+  try FileManager.default.createDirectory(at: mount, withIntermediateDirectories: true)
+  _ = try run("/usr/bin/hdiutil", ["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", mount.path, dmg.path])
+  defer { _ = try? run("/usr/bin/hdiutil", ["detach", "-force", mount.path]) }
+  let fresh = mount.appendingPathComponent("Luch.app")
+  let info = NSDictionary(contentsOf: fresh.appendingPathComponent("Contents/Info.plist"))
+  guard info?["CFBundleIdentifier"] as? String == "org.luch.Luch" else { throw UpdateError("В образе нет Luch") }
+  do { _ = try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", fresh.path]) }
+  catch { throw UpdateError("Подпись приложения в образе повреждена") }
+
+  let staged = app.deletingLastPathComponent().appendingPathComponent(".Luch-update.app")
+  if exists(staged) { try FileManager.default.removeItem(at: staged) }
+  do { _ = try run("/usr/bin/ditto", [fresh.path, staged.path]) }
+  catch { throw UpdateError("Нет доступа к папке \(app.deletingLastPathComponent().path)") }
+  // Образ проверен по контрольной сумме — снимаем пометку «скачано из интернета», иначе macOS
+  // не даст запустить обновлённый Luch без подтверждения в настройках
+  _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", staged.path])
+
+  // Закрыть Luch так же, как ⌘Q (вкладки восстановятся), дождаться выхода, заменить и запустить
+  let pid = getppid()
+  guard pid > 1 else { throw UpdateError("Не удалось определить запущенный Luch") }
+  let script = """
+    osascript -e "tell application \\"$1\\" to quit"
+    for i in $(seq 240); do kill -0 \(pid) 2>/dev/null || break; sleep 0.5; done
+    kill -0 \(pid) 2>/dev/null && exit 1
+    mv "$1" "$1.old" && mv "$2" "$1" && rm -rf "$1.old"
+    open "$1"
+    """
+  try spawnDetached(["/bin/sh", "-c", script, "luch-update", app.path, staged.path])
+  send(["type": "update"])
+}
+
 while let msg = readMessage() {
   switch msg["cmd"] as? String {
   case "detect": send(["type": "detect", "browsers": detect()])
   case "read": read(msg)
+  case "update":
+    do { try update(msg) } catch { send(["type": "error", "label": "Обновление", "message": error.localizedDescription]) }
   default: send(["type": "error", "label": "Импорт", "message": "Неизвестная команда"])
   }
   send(["type": "done"])

@@ -34,6 +34,8 @@
     'alt+cmd+[': ['split-focus', -1],
     'alt+cmd+-': ['unsplit'],
     'cmd+shift+y': ['translate'],
+    'cmd+shift+s': ['screenshot'],
+    'alt+cmd+p': ['pip'],
     'alt+cmd+arrowdown': ['next-tab', 1],
     'alt+cmd+arrowup': ['next-tab', -1],
     'cmd+shift+a': ['search-tabs'],
@@ -49,7 +51,7 @@
     ...Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`ctrl+${i + 1}`, ['select-space', i]])),
   };
   window.LUCH_KEYS = KEYS;
-  const keyName = (e) => [e.ctrlKey && 'ctrl', e.altKey && 'alt', e.metaKey && 'cmd', e.shiftKey && 'shift', (e.code.startsWith('Digit') ? e.code.slice(5) : e.code === 'Equal' ? '=' : e.code === 'Minus' ? '-' : e.code === 'BracketLeft' ? '[' : e.code === 'BracketRight' ? ']' : e.code === 'Comma' ? ',' : e.key).toLowerCase()].filter(Boolean).join('+');
+  const keyName = (e) => [e.ctrlKey && 'ctrl', e.altKey && 'alt', e.metaKey && 'cmd', e.shiftKey && 'shift', (e.code.startsWith('Digit') ? e.code.slice(5) : e.code.startsWith('Key') ? e.code.slice(3) : e.code === 'Equal' ? '=' : e.code === 'Minus' ? '-' : e.code === 'BracketLeft' ? '[' : e.code === 'BracketRight' ? ']' : e.code === 'Comma' ? ',' : e.key).toLowerCase()].filter(Boolean).join('+');
   document.addEventListener('keydown', (e) => {
     const hit = KEYS[keyName(e)];
     if (!hit) return;

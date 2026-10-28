@@ -11,6 +11,7 @@ const SEARCH_ENGINES = {
 const DEFAULT_SETTINGS = {
   search: 'google', theme: 'system', restore: true, translateTo: 'ru',
   newTabsTop: true, autohide: false, cmdClickGroups: true, cleanupHours: 0, autoFit: true, translateEngine: 'online',
+  autoUpdate: true,
 };
 const DEFAULT_PINS = [
   { url: 'https://mail.google.com/', title: 'Gmail' },
@@ -139,9 +140,12 @@ const lastActive = {};
 let pinnedData = store.get('pinned', {});
 let groups = store.get('groups', []);
 
-// У каждого пространства своя сессия: отдельные cookie, входы и хранилище сайтов
+// У каждого пространства своя сессия: отдельные cookie, входы и хранилище сайтов.
+// Закрытое пространство хранит их только в памяти — всё стирается при выходе из Luch
+function isPrivateSpace(spaceId) { return Boolean(spaces.find(s => s.id === spaceId)?.private); }
 function partitionFor(spaceId) {
   if (INCOGNITO) return 'incognito';
+  if (isPrivateSpace(spaceId)) return `private-space-${spaceId}`;
   return `persist:space-${spaceId}`;
 }
 
@@ -156,8 +160,9 @@ let persistTimer = null;
 function persist() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
+    // Вкладки закрытых пространств не восстанавливаются при следующем запуске
     store.set('session', tabs
-      .filter(t => !t.pinnedId && t.url !== NEW_TAB_URL)
+      .filter(t => !t.pinnedId && t.url !== NEW_TAB_URL && !isPrivateSpace(t.spaceId))
       .map(t => ({ url: t.url, title: t.title, spaceId: t.spaceId, groupId: t.groupId || null, customTitle: t.customTitle || null })));
   }, 300);
 }
@@ -252,20 +257,20 @@ function bindWebview(tab, token) {
     if (hostOf(e.url) !== tab.fitHost) { tab.minWidth = 0; tab.fitHost = hostOf(e.url); }
     if (tab.showOriginal !== e.url) tab.showOriginal = null;
     stopTranslation(tab);
-    addHistory(tab.url, tab.title);
+    if (!isPrivateSpace(tab.spaceId)) addHistory(tab.url, tab.title);
     update();
     persist();
   });
   wv.addEventListener('did-navigate-in-page', (e) => {
     if (!e.isMainFrame) return;
     tab.url = e.url;
-    addHistory(tab.url, tab.title);
+    if (!isPrivateSpace(tab.spaceId)) addHistory(tab.url, tab.title);
     update();
     persist();
   });
   wv.addEventListener('page-title-updated', (e) => {
     tab.title = e.title;
-    updateHistoryTitle(tab.url, e.title);
+    if (!isPrivateSpace(tab.spaceId)) updateHistoryTitle(tab.url, e.title);
     update();
     persist();
   });
@@ -1146,13 +1151,14 @@ function setSpace(id, { activate = true } = {}) {
 
 function renderSpaces() {
   $('space-btn').textContent = spaces.find(s => s.id === currentSpace).name;
+  $('space-btn').classList.toggle('private', isPrivateSpace(currentSpace));
   const box = $('spaces');
   box.innerHTML = '';
   if (INCOGNITO) return;
   for (const s of spaces) {
-    const dot = el('button', 'space-dot' + (s.id === currentSpace ? ' current' : ''));
+    const dot = el('button', 'space-dot' + (s.id === currentSpace ? ' current' : '') + (s.private ? ' private' : ''));
     dot.style.setProperty('--dot', spaceColor(s));
-    dot.title = s.name;
+    dot.title = s.private ? `${s.name} — закрытое` : s.name;
     dot.addEventListener('click', () => { if (s.id !== currentSpace) setSpace(s.id); });
     dot.addEventListener('contextmenu', (e) => { e.preventDefault(); openSpaceEditor(s.id, dot, { focusTheme: true }); });
     box.appendChild(dot);
@@ -1170,7 +1176,7 @@ function placePopover(pop, anchor) {
 function closePopovers() {
   // Закрыли редактор без сохранения — убираем предпросмотр темы
   if (!$('space-editor').hidden) applySpaceTheme();
-  for (const id of ['space-menu', 'space-editor', 'downloads-pop']) $(id).hidden = true;
+  for (const id of ['space-menu', 'space-editor', 'downloads-pop', 'shot-menu']) $(id).hidden = true;
   $('space-btn').classList.remove('open');
 }
 
@@ -1192,7 +1198,7 @@ function openSpaceMenu() {
     const b = item(`<span class="check">${s.id === currentSpace ? '✓' : ''}</span><span class="dot"></span><span class="mi-label"></span><span class="shortcut">${i < 9 ? '⌃' + (i + 1) : ''}</span>`,
       () => setSpace(s.id));
     b.querySelector('.dot').style.background = spaceColor(s);
-    b.querySelector('.mi-label').textContent = s.name;
+    b.querySelector('.mi-label').textContent = s.private ? `${s.name} · закрытое` : s.name;
   });
   item('<span class="check"></span><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg><span class="mi-label">Новое пространство…</span>',
     () => openSpaceEditor(null));
@@ -1201,6 +1207,10 @@ function openSpaceMenu() {
     () => openSpaceEditor(currentSpace, $('space-btn'), { focusTheme: true }));
   item('<span class="check"></span><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2"/></svg><span class="mi-label">Настройки пространства</span>',
     () => openSpaceEditor(currentSpace));
+  if (isPrivateSpace(currentSpace)) {
+    item('<span class="check"></span><svg viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5"/></svg><span class="mi-label">Стереть данные сейчас</span>',
+      () => wipePrivateSpace(currentSpace));
+  }
   $('space-btn').classList.add('open');
   placePopover(menu, $('space-btn'));
 }
@@ -1218,6 +1228,7 @@ function openSpaceEditor(id, anchor = $('space-btn'), { focusTheme = false } = {
   editingTheme = s?.theme || LuchTheme.defaultTheme(s ? spaceColor(s) : SPACE_COLORS[spaces.length % SPACE_COLORS.length]);
   $('space-editor-title').textContent = !s ? 'Новое пространство' : focusTheme ? `Тема пространства «${s.name}»` : 'Настройки пространства';
   $('space-editor-name').value = s ? s.name : '';
+  $('space-editor-private').checked = Boolean(s?.private);
   $('space-save').textContent = s ? 'Сохранить' : 'Создать';
   $('space-delete').hidden = !s || spaces.length < 2;
   // Тема: точки цветов, режим, насыщенность и зернистость; окно сразу показывает результат
@@ -1235,17 +1246,57 @@ function openSpaceEditor(id, anchor = $('space-btn'), { focusTheme = false } = {
 function saveSpaceEditor() {
   const name = $('space-editor-name').value.trim();
   if (!name) { $('space-editor-name').focus(); return; }
+  const isPrivate = $('space-editor-private').checked;
   if (editingSpace === null) {
     const id = Math.max(...spaces.map(s => s.id)) + 1;
-    spaces.push({ id, name, theme: editingTheme });
+    spaces.push({ id, name, theme: editingTheme, private: isPrivate });
     closePopovers();
     setSpace(id);
   } else {
-    Object.assign(spaces.find(s => s.id === editingSpace), { name, theme: editingTheme });
+    const s = spaces.find(x => x.id === editingSpace);
+    const changed = Boolean(s.private) !== isPrivate;
+    Object.assign(s, { name, theme: editingTheme, private: isPrivate });
     closePopovers();
     saveSpaces();
     renderSpaces();
+    // Хранилище сменилось — вкладки пространства открываются заново уже в нём
+    if (changed) reopenSpaceTabs(s.id);
   }
+}
+
+function reopenSpaceTabs(spaceId) {
+  for (const t of tabs.filter(t => t.spaceId === spaceId && t.webview)) {
+    t.webview.remove();
+    t.webview = null;
+    t.wcId = null;
+  }
+  const active = activeTab();
+  if (active?.spaceId === spaceId) { ensureWebview(active); activateTab(active.id); }
+  renderTabs();
+  persist();
+}
+
+// Стирает cookie, входы и данные сайтов закрытого пространства, не дожидаясь выхода из Luch
+async function wipePrivateSpace(spaceId) {
+  if (!isPrivateSpace(spaceId)) return;
+  const all = { appcache: true, cache: true, cookies: true, sessionCookies: true, persistentCookies: true,
+    fileSystems: true, indexedDB: true, localStorage: true, webSQL: true };
+  let wv = tabs.find(t => t.spaceId === spaceId && t.webview)?.webview;
+  let temp = null;
+  if (!wv) {
+    // Ни одной открытой вкладки — стираем через временную пустую страницу в том же хранилище
+    temp = document.createElement('webview');
+    temp.setAttribute('partition', partitionFor(spaceId));
+    temp.setAttribute('src', 'about:blank');
+    temp.classList.add('hidden');
+    viewsEl.appendChild(temp);
+    await new Promise(r => temp.addEventListener('loadstop', r, { once: true }));
+    wv = temp;
+  }
+  await new Promise(r => wv.clearData({ since: 0 }, all, r));
+  temp?.remove();
+  for (const t of tabs.filter(t => t.spaceId === spaceId && t.webview)) t.webview.reload();
+  showNotice('Данные закрытого пространства стёрты', { done: true });
 }
 $('space-save').onclick = saveSpaceEditor;
 $('space-cancel').onclick = closePopovers;
@@ -1681,6 +1732,79 @@ $('btn-downloads').onclick = (e) => {
   e.stopPropagation();
   if ($('downloads-pop').hidden) openDownloads(); else closePopovers();
 };
+
+// ---------- Снимки страницы (page-shot.js) ----------
+
+function openShotMenu() {
+  const t = activeTab();
+  if (!t?.webview || t.url === NEW_TAB_URL) return;
+  const menu = $('shot-menu');
+  closePopovers();
+  menu.innerHTML = '';
+  for (const [mode, label] of [['visible', 'Видимая часть'], ['full', 'Вся страница'], ['area', 'Выделить область…'], ['pdf', 'Сохранить как PDF…']]) {
+    const b = el('button', 'menu-item');
+    b.innerHTML = '<span class="mi-label"></span>';
+    b.querySelector('.mi-label').textContent = label;
+    b.onclick = () => { closePopovers(); takeScreenshot(mode); };
+    menu.appendChild(b);
+  }
+  placePopover(menu, $('address-wrap'));
+}
+
+async function takeScreenshot(mode) {
+  const t = activeTab();
+  if (!t?.webview || t.url === NEW_TAB_URL) return;
+  const wv = t.webview;
+  // PDF — через печать Chromium: там есть «Сохранить как PDF»
+  if (mode === 'pdf') { wv.print(); return; }
+  try {
+    if (mode === 'full') showNotice('Снимаю всю страницу…');
+    if (mode === 'area') showNotice('Выделите область мышью; Esc — отмена');
+    const result = mode === 'full' ? await LuchShot.full(wv) : mode === 'area' ? await LuchShot.area(wv) : await LuchShot.visible(wv);
+    if (!result) return;
+    const blob = result.blob || result;
+    await saveShot(blob, t, result.cut);
+  } catch (e) {
+    showNotice(`Снимок не получился: ${e.message}`);
+  }
+}
+
+async function saveShot(blob, t, cut) {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} в ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}`;
+  const host = (hostOf(t.url) || 'страница').replace(/[\\/:*?"<>|]/g, '');
+  const url = URL.createObjectURL(blob);
+  try {
+    await chrome.downloads.download({ url, filename: `Снимок ${host} ${stamp}.png` });
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+  let copied = false;
+  try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); copied = true; } catch {}
+  const where = copied ? 'сохранён в «Загрузки» и скопирован' : 'сохранён в «Загрузки»';
+  showNotice(cut ? `Снимок ${where}. Страница очень длинная — снят только верх` : `Снимок ${where}`, { done: true });
+}
+
+// ---------- Картинка в картинке ----------
+
+// Включает картинку в картинке для самого крупного видео на странице, а если она уже открыта — закрывает.
+// Скрипт из Luch считается действием пользователя, поэтому браузер разрешает запрос
+function togglePictureInPicture() {
+  const t = activeTab();
+  if (!t?.webview) return;
+  t.webview.executeJavaScript(`(() => {
+    if (document.pictureInPictureElement) { document.exitPictureInPicture().catch(() => {}); return 'exit'; }
+    const videos = [...document.querySelectorAll('video')].filter(v => v.readyState > 0 && !v.disablePictureInPicture);
+    const area = (v) => { const r = v.getBoundingClientRect(); return r.width * r.height; };
+    const video = videos.find(v => !v.paused) || videos.sort((a, b) => area(b) - area(a))[0];
+    if (!video) return 'none';
+    video.requestPictureInPicture().catch(() => {});
+    return 'enter';
+  })()`).then((r) => {
+    if (r === 'none') showNotice('На странице нет видео для картинки в картинке');
+  }, () => {});
+}
 
 // ---------- Поиск на странице ----------
 
@@ -2261,6 +2385,8 @@ async function openSettings(section = 'general') {
   $('set-search').value = s.search;
   $('set-theme').value = s.theme;
   $('set-restore').checked = s.restore;
+  $('set-auto-update').checked = s.autoUpdate;
+  $('set-version').textContent = LUCH_VERSION;
   $('set-new-top').checked = s.newTabsTop;
   $('set-auto-fit').checked = s.autoFit;
   $('set-autohide').checked = s.autohide;
@@ -2384,6 +2510,7 @@ const DNS_PRESETS = {
   quad9: 'https://dns.quad9.net/dns-query',
   adguard: 'https://dns.adguard-dns.com/dns-query',
   yandex: 'https://common.dot.dns.yandex.net/dns-query',
+  comss: 'https://dns.comss.one/dns-query',
 };
 
 function dnsStatus(text, error = false) {
@@ -2495,7 +2622,7 @@ $('set-open-store').onclick = () => { closeSettings(); createTab('https://chrome
 const SHORTCUTS = [
   ['Командная строка', '⌘L'], ['Новая вкладка', '⌘T'], ['Закрыть вкладку', '⌘W'], ['Вернуть закрытую вкладку', '⇧⌘T'],
   ['Поиск по вкладкам', '⇧⌘A'], ['Закрепить вкладку', '⌘D'], ['Новая группа с вкладкой', '⌥⌘N'], ['Очистить вкладки', '⇧⌘K'],
-  ['Чат с Gemini', '⌘E'], ['Перевести страницу', '⇧⌘Y'], ['Показать или скрыть вкладки', '⌘S'], ['Автоскрытие вкладок', '⌥⌘S'],
+  ['Чат с Gemini', '⌘E'], ['Перевести страницу', '⇧⌘Y'], ['Снимок страницы', '⇧⌘S'], ['Картинка в картинке', '⌥⌘P'], ['Показать или скрыть вкладки', '⌘S'], ['Автоскрытие вкладок', '⌥⌘S'],
   ['Разделить экран', '⌥⌘='], ['Переключить панель', '⌥⌘] / ⌥⌘['], ['Убрать разделение', '⌥⌘−'],
   ['Масштаб: больше / меньше / 100%', '⌘+ / ⌘− / ⌘0 (или ⌃)'],
   ['Копировать адрес', '⇧⌘C'], ['Копировать как Markdown', '⌥⇧⌘C'], ['Найти на странице', '⌘F'],
@@ -2514,6 +2641,106 @@ function renderShortcuts() {
 $('set-search').onchange = (e) => setSetting('search', e.target.value);
 $('set-theme').onchange = (e) => { setSetting('theme', e.target.value); applySpaceTheme(); };
 $('set-restore').onchange = (e) => setSetting('restore', e.target.checked);
+$('set-auto-update').onchange = (e) => setSetting('autoUpdate', e.target.checked);
+
+// ---------- Обновления Luch ----------
+// Новая версия — последний релиз на GitHub. Образ скачивают загрузки Chromium, а ставит помощник
+// Luch (native/importer.swift): сверяет SHA-256 из релиза, меняет приложение и перезапускает Luch
+const LUCH_VERSION = chrome.runtime.getManifest().version_name || chrome.runtime.getManifest().version;
+const RELEASES_API = 'https://api.github.com/repos/rutra0art/luch/releases/latest';
+const RELEASE_FILES = 'https://github.com/rutra0art/luch/releases/download/';
+let pendingUpdate = null; // { version, url, sha256, name }
+
+function isNewer(a, b) {
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+}
+
+function updateStatus(text, error = false) {
+  $('set-update-status').textContent = text;
+  $('set-update-status').classList.toggle('error', error);
+}
+
+async function checkForUpdate() {
+  const r = await fetch(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } });
+  if (!r.ok) throw new Error(`GitHub ответил ${r.status}`);
+  const release = await r.json();
+  const version = String(release.tag_name || '').replace(/^v/, '');
+  const asset = (release.assets || []).find(a => /arm64\.dmg$/.test(a.name) && a.browser_download_url?.startsWith(RELEASE_FILES));
+  const sha256 = /^sha256:([0-9a-f]{64})$/.exec(asset?.digest || '')?.[1];
+  pendingUpdate = isNewer(version, LUCH_VERSION) && asset && sha256
+    ? { version, url: asset.browser_download_url, sha256, name: asset.name } : null;
+  $('update-badge').hidden = !pendingUpdate;
+  if (pendingUpdate) $('update-badge').textContent = `Обновить Luch до ${version}`;
+  $('set-update-row').hidden = !pendingUpdate;
+  return pendingUpdate;
+}
+
+function waitForDownload(id) {
+  return new Promise((resolve, reject) => {
+    const done = () => chrome.downloads.onChanged.removeListener(onChange);
+    const check = async () => {
+      const [d] = await chrome.downloads.search({ id });
+      if (d?.state === 'complete') { done(); resolve(d); }
+      else if (d?.state === 'interrupted') { done(); reject(new Error('Загрузка прервалась')); }
+    };
+    const onChange = (delta) => { if (delta.id === id) check(); };
+    chrome.downloads.onChanged.addListener(onChange);
+    check();
+  });
+}
+
+function installWithHelper(dmg, sha256) {
+  return new Promise((resolve, reject) => {
+    const port = chrome.runtime.connectNative('org.luch.importer');
+    port.onMessage.addListener((m) => {
+      if (m.type === 'update') resolve();
+      else if (m.type === 'error') reject(new Error(m.message));
+    });
+    port.onDisconnect.addListener(() => reject(new Error(chrome.runtime.lastError?.message || 'Помощник Luch завершился')));
+    port.postMessage({ cmd: 'update', dmg, sha256 });
+  });
+}
+
+async function installUpdate() {
+  const u = pendingUpdate;
+  if (!u) return;
+  $('set-update-install').disabled = true;
+  try {
+    updateStatus(`Скачиваю Luch ${u.version}…`);
+    const id = await chrome.downloads.download({ url: u.url, filename: `Luch-update/${u.name}`, conflictAction: 'overwrite', saveAs: false });
+    const item = await waitForDownload(id);
+    updateStatus('Проверяю и устанавливаю…');
+    await installWithHelper(item.filename, u.sha256);
+    updateStatus('Luch перезапускается — вкладки восстановятся.');
+  } catch (e) {
+    updateStatus(`Не удалось обновить: ${e.message}`, true);
+    $('set-update-install').disabled = false;
+  }
+}
+
+$('set-update-check').onclick = async () => {
+  updateStatus('Проверяю…');
+  try {
+    const u = await checkForUpdate();
+    updateStatus(u ? `Доступна версия ${u.version}. Luch перезапустится, вкладки восстановятся.` : 'У вас последняя версия.');
+  } catch (e) {
+    updateStatus(`Не удалось проверить: ${e.message}`, true);
+  }
+};
+$('set-update-install').onclick = installUpdate;
+$('update-badge').onclick = () => {
+  openSettings('general');
+  updateStatus(`Доступна версия ${pendingUpdate.version}. Luch перезапустится, вкладки восстановятся.`);
+};
+
+// Проверка через минуту после запуска и затем раз в шесть часов
+if (!INCOGNITO) {
+  const autoCheck = () => { if (settings().autoUpdate) checkForUpdate().catch(() => {}); };
+  setTimeout(autoCheck, 60 * 1000);
+  setInterval(autoCheck, 6 * 60 * 60 * 1000);
+}
 $('set-new-top').onchange = (e) => setSetting('newTabsTop', e.target.checked);
 $('set-auto-fit').onchange = (e) => { setSetting('autoFit', e.target.checked); for (const t of tabs) if (t.webview) autoFit(t); };
 $('set-autohide').onchange = (e) => { setSetting('autohide', e.target.checked); applyAutohide(); };
@@ -2876,6 +3103,8 @@ const commands = {
   'select-webcontents': (wcId) => { const t = tabByWc(wcId); if (t) activateTab(t.id); },
   'close-webcontents': (wcId) => { const t = tabByWc(wcId); if (t) closeTab(t.id); },
   'ask-selection': (text) => withPage(`Объясни коротко этот фрагмент со страницы: «${text}»`, true),
+  'screenshot': (mode) => (typeof mode === 'string' ? takeScreenshot(mode) : openShotMenu()),
+  'pip': () => togglePictureInPicture(),
 };
 window.luch.onCommand((cmd, ...args) => commands[cmd]?.(...args));
 
