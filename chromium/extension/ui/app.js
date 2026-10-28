@@ -3173,6 +3173,75 @@ const commands = {
 };
 window.luch.onCommand((cmd, ...args) => commands[cmd]?.(...args));
 
+// ---------- Ширина колонки вкладок и панели Gemini ----------
+
+const PANEL_WIDTHS = {
+  tabbar: { key: 'tabbarWidth', css: '--tabbar-w', def: 240, min: 180, max: 420, el: 'tabbar-resizer', sign: 1, panel: 'tabbar',
+    hide: () => { if (settings().autohide) document.body.classList.remove('peek'); else if (!document.body.classList.contains('collapsed')) toggleTabbar(); } },
+  chat: { key: 'chatWidth', css: '--chat-w', def: 400, min: 300, max: 720, el: 'chat-resizer', sign: -1, panel: 'chat',
+    hide: () => toggleChat(false) },
+};
+// Утянули край дальше минимальной ширины на столько — панель скрывается целиком, как в Arc
+const HIDE_PULL = 80;
+
+function applyPanelWidths() {
+  const s = settings();
+  for (const p of Object.values(PANEL_WIDTHS)) {
+    const w = Math.min(p.max, Math.max(p.min, Number(s[p.key]) || p.def));
+    document.documentElement.style.setProperty(p.css, w + 'px');
+  }
+}
+
+// Подгонка страниц под новую ширину — после того, как отпустили край
+function refitVisibleTabs() {
+  for (const t of tabs) if (t.webview && !t.webview.classList.contains('hidden')) autoFit(t);
+}
+
+for (const p of Object.values(PANEL_WIDTHS)) {
+  const handle = $(p.el);
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(p.css)) || p.def;
+    let width = startW;
+    let hiding = false;
+    // Прозрачный слой поверх окна получает все движения мыши: иначе их забирают страницы во вкладках
+    const shield = el('div', 'resize-shield');
+    document.body.appendChild(shield);
+    handle.classList.add('active');
+    document.body.classList.add('resizing');
+    const move = (ev) => {
+      const raw = startW + p.sign * (ev.clientX - startX);
+      hiding = raw < p.min - HIDE_PULL;
+      $(p.panel).classList.toggle('will-hide', hiding);
+      width = Math.round(Math.min(p.max, Math.max(p.min, raw)));
+      document.documentElement.style.setProperty(p.css, width + 'px');
+    };
+    const up = () => {
+      shield.remove();
+      handle.classList.remove('active');
+      document.body.classList.remove('resizing');
+      $(p.panel).classList.remove('will-hide');
+      if (hiding) {
+        // Скрываем целиком; при следующем открытии панель будет прежней ширины
+        document.documentElement.style.setProperty(p.css, startW + 'px');
+        p.hide();
+        return;
+      }
+      if (width !== startW) { setSetting(p.key, width); refitVisibleTabs(); }
+    };
+    shield.addEventListener('pointermove', move);
+    shield.addEventListener('pointerup', up);
+    shield.addEventListener('pointercancel', up);
+  });
+  handle.addEventListener('dblclick', () => {
+    setSetting(p.key, p.def);
+    applyPanelWidths();
+    refitVisibleTabs();
+  });
+}
+
 // ---------- Запуск ----------
 
 if (INCOGNITO) {
@@ -3182,6 +3251,7 @@ if (INCOGNITO) {
 }
 if (store.get('collapsed', false)) document.body.classList.add('collapsed');
 applyAutohide();
+applyPanelWidths();
 window.luch.setTheme(settings().theme);
 // Тема пространства в режиме «авто» следует за системой
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applySpaceTheme);

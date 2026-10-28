@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Luch",
-  "version": "1.3.3",
-  "version_name": "0.4.3",
+  "version": "1.3.4",
+  "version_name": "0.4.4",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvJQ9fkijbBNb+wAYp73NW7VSK7iHTHz019b1RpL/sowW1kHqo9c3kM9tliCfujKCFSfq+qYSmXI12dSP6LRwHD2/49VjPvinnCsYjbfgqzNZFdhSfHCkYGoAV6qY/3ohe6jgd2HqYYgBvui5wbGvasd88d1FeW9w6atsaQy0CKE5tL6IZeN1kSz54ggp9xxBG0iuav4fmA7+RicW6wrIqbDdM+eyaybCUKs97H3cxTOMDStvt26BFPZrH9TVQEHd7Eck7todhp559CcJx/uemVOPG0yLx8QUnIIYcKNaKSQm5pDstLmWueQLg87Ck8XnUFJ6Ylpx5Xmc437xtz9e+QIDAQAB",
   "description": "Интерфейс браузера Luch: вкладки сбоку, пространства, Gemini, перевод страниц.",
   "icons": {

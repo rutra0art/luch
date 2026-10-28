@@ -97,14 +97,15 @@ button { font: inherit; color: inherit; }
 .icon.small svg { width: 14px; height: 14px; }
 
 /* ---------- Левая колонка ---------- */
+:root { --tabbar-w: 240px; --chat-w: 400px; }
 #tabbar {
-  width: 240px; flex: none;
+  width: var(--tabbar-w); flex: none; position: relative;
   display: flex; flex-direction: column;
   padding: 0 8px 8px;
   -webkit-app-region: drag;
   transition: margin-left .2s ease, transform .2s ease;
 }
-body.collapsed #tabbar { margin-left: -240px; }
+body.collapsed #tabbar { margin-left: calc(-1 * var(--tabbar-w)); }
 #tabbar > *:not(.tabbar-head), .tabbar-head > * { -webkit-app-region: no-drag; }
 
 /* Автоскрытие: колонка выезжает поверх страницы при наведении на левый край */
@@ -470,9 +471,22 @@ body.collapsed #toolbar { padding-left: 76px; }
 kbd { font: 11px -apple-system, sans-serif; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); }
 .go-btn { height: 26px; padding: 0 12px; border: 0; border-radius: 13px; background: var(--text); color: var(--surface); font-weight: 600; font-size: 12px; }
 
+/* Края колонки вкладок и панели Gemini тянутся мышью */
+.resizer { position: absolute; top: 0; bottom: 0; width: 7px; z-index: 5; cursor: col-resize; -webkit-app-region: no-drag; }
+#tabbar-resizer { right: -4px; }
+#chat-resizer { left: -4px; }
+.resizer:hover, .resizer.active { background: linear-gradient(90deg, transparent 2px, var(--accent) 2px, var(--accent) 4px, transparent 4px); opacity: .6; }
+/* Пока тянем, страницы не перехватывают мышь и колонка не анимируется */
+body.resizing webview { pointer-events: none; }
+.resize-shield { position: fixed; inset: 0; z-index: 2147483647; cursor: col-resize; -webkit-app-region: no-drag; }
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
+body.resizing #tabbar { transition: none; }
+/* Отпустите — и панель скроется */
+#tabbar.will-hide, #chat.will-hide { opacity: .35; transition: opacity .12s; }
+
 /* ---------- Чат справа на всю высоту ---------- */
 #chat {
-  width: 400px; flex: none;
+  width: var(--chat-w); flex: none; position: relative;
   display: flex; flex-direction: column;
   padding: 0 6px 6px 0;
 }
