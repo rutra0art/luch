@@ -8,10 +8,13 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test \"tests/unit/*.test.js\"",
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "build:adblocker": "esbuild chromium/build/adblocker-entry.js --bundle --minify --format=iife --platform=browser --outfile=chromium/extension/ui/adblocker.js",
+    "build:importer": "swiftc -O -o chromium/native/luch-importer chromium/native/importer.swift"
   },
   "devDependencies": {
-    "electron": "^38.0.0"
+    "electron": "^38.0.0",
+    "esbuild": "0.25.10"
   },
   "dependencies": {
     "@ghostery/adblocker-electron": "2.20.1",

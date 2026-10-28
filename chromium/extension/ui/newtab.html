@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Новая вкладка</title>
+  <style>
+    :root {
+      --bg: #fffdf7;
+      --hover: rgba(80, 60, 20, 0.05);
+      --card: #ffffff;
+      --text: #2b2618;
+      --muted: #a59b84;
+      --border: rgba(80, 60, 20, 0.10);
+      --shadow: 0 1px 2px rgba(80, 60, 20, 0.05), 0 10px 40px rgba(120, 90, 20, 0.10);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #1f2228;
+        --card: #2a2d33;
+        --hover: rgba(200, 220, 255, 0.05);
+        --text: #e6eaf0;
+        --muted: #8892a2;
+        --border: rgba(200, 220, 255, 0.08);
+        --shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+      }
+    }
+    :root[data-theme="dark"] {
+        --bg: #1f2228;
+        --card: #2a2d33;
+        --hover: rgba(200, 220, 255, 0.05);
+        --text: #e6eaf0;
+        --muted: #8892a2;
+        --border: rgba(200, 220, 255, 0.08);
+        --shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+      }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background:
+        radial-gradient(60% 50% at 50% 0%, rgba(243, 199, 107, 0.18), transparent 70%),
+        var(--bg);
+      color: var(--text);
+      font: 14px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+    }
+    .wrap { width: min(620px, 100%); display: flex; flex-direction: column; align-items: center; gap: 28px; margin-top: -8vh; }
+    .orb {
+      width: 64px; height: 64px; border-radius: 50%;
+      background:
+        radial-gradient(circle at 35% 30%, #fff3c4 0%, transparent 45%),
+        radial-gradient(circle at 60% 70%, #c9831f 0%, transparent 60%),
+        linear-gradient(160deg, #f6cf72, #d9952c);
+      box-shadow: 0 8px 24px rgba(217, 149, 44, 0.35), inset 0 -4px 10px rgba(120, 70, 10, 0.25);
+      animation: breathe 5s ease-in-out infinite;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) body { background: var(--bg); }
+      :root:not([data-theme="light"]) .orb {
+        background:
+          radial-gradient(circle at 35% 30%, #e8f0ff 0%, transparent 45%),
+          radial-gradient(circle at 60% 75%, #5d7fc4 0%, transparent 60%),
+          linear-gradient(160deg, #a8c4f0, #6b8bc9);
+        box-shadow: 0 8px 24px rgba(93, 127, 196, 0.3), inset 0 -4px 10px rgba(20, 40, 90, 0.3);
+      }
+    }
+    :root[data-theme="dark"] body { background: var(--bg); }
+    :root[data-theme="dark"] .orb {
+        background:
+          radial-gradient(circle at 35% 30%, #e8f0ff 0%, transparent 45%),
+          radial-gradient(circle at 60% 75%, #5d7fc4 0%, transparent 60%),
+          linear-gradient(160deg, #a8c4f0, #6b8bc9);
+        box-shadow: 0 8px 24px rgba(93, 127, 196, 0.3), inset 0 -4px 10px rgba(20, 40, 90, 0.3);
+      }
+    @keyframes breathe { 50% { transform: scale(1.06); box-shadow: 0 12px 34px rgba(217, 149, 44, 0.45), inset 0 -4px 10px rgba(120, 70, 10, 0.25); } }
+    h1 { margin: -12px 0 0; font-size: 22px; font-weight: 500; letter-spacing: -0.01em; }
+    form {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 14px 16px 10px;
+    }
+    .row { display: flex; align-items: center; gap: 10px; }
+    .row svg { width: 16px; height: 16px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.7; stroke-linecap: round; }
+    input {
+      flex: 1; border: 0; outline: 0; background: transparent;
+      font: inherit; font-size: 15px; color: inherit;
+    }
+    input::placeholder { color: var(--muted); }
+    .hint { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; color: var(--muted); font-size: 12px; }
+    .go {
+      width: 28px; height: 28px; border-radius: 50%; border: 0;
+      background: var(--border); color: var(--text);
+      display: grid; place-items: center;
+    }
+    .go svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .suggest { list-style: none; margin: 10px 0 2px; padding: 0; }
+    .suggest li {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 6px; border-radius: 8px; cursor: default;
+    }
+    .suggest li:hover { background: var(--hover); }
+    .suggest svg { width: 15px; height: 15px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    form.typing .suggest { display: none; }
+    kbd { font: inherit; padding: 1px 5px; border: 1px solid var(--border); border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="orb"></div>
+    <h1 id="greeting">Добрый день</h1>
+    <form id="form" autocomplete="off">
+      <div class="row">
+        <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+        <input id="q" placeholder="Спросите что угодно…" autofocus>
+      </div>
+      <ul class="suggest">
+        <li data-q="Что важного произошло в мире сегодня? Коротко, по пунктам."><svg viewBox="0 0 16 16"><path d="M8 1.5c.5 3.3 3.2 6 6.5 6.5-3.3.5-6 3.2-6.5 6.5-.5-3.3-3.2-6-6.5-6.5 3.3-.5 6-3.2 6.5-6.5z"/></svg>Что важного произошло в мире сегодня?</li>
+        <li data-q="Помоги составить план дел на сегодня. Сначала задай мне пару уточняющих вопросов."><svg viewBox="0 0 16 16"><path d="M5 4h8M5 8h8M5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/></svg>Помоги составить план на день</li>
+        <li data-q="Напиши вежливое письмо коллеге с просьбой перенести встречу на завтра."><svg viewBox="0 0 16 16"><path d="M2.5 4.5h11v7h-11zM2.5 4.5L8 9l5.5-4.5"/></svg>Напиши письмо о переносе встречи</li>
+      </ul>
+      <div class="hint">
+        <span><kbd>Enter</kbd> искать в интернете · <kbd>⌘Enter</kbd> спросить Gemini</span>
+        <button class="go" type="submit" title="Найти">
+          <svg viewBox="0 0 16 16"><path d="M8 13V3M4 7l4-4 4 4"/></svg>
+        </button>
+      </div>
+    </form>
+  </div>
+  <script src="newtab-page.js"></script>
+</body>
+</html>

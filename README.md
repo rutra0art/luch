@@ -14,6 +14,8 @@ A minimal Chromium-based browser for macOS with a Russian interface, built on El
 - **Ad, tracker and cookie-banner blocking** (EasyList and uBlock Origin filters).
 - Split view, auto-hiding sidebar, incognito windows, history, downloads, find in page, per-site notes, auto-fit of wide sites, theme-aware Eclipse icon.
 
+A version built on a real Chromium, where Google sign-in works, lives in [`chromium/`](chromium/README.md).
+
 ## Run
 
 Requires [Node.js](https://nodejs.org) 20 or newer.

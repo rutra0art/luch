@@ -1,7 +1,7 @@
 // Сквозные тесты интерфейса Luch. Запуск: сначала Luch с портом отладки
 //   npx electron . --remote-debugging-port=9333
 // затем npm run test:e2e. Тесты сохраняют localStorage и вкладки и восстанавливают их в конце.
-const list = await (await fetch('http://localhost:9333/json')).json();
+const list = await (await fetch(`http://localhost:${process.env.LUCH_PORT || 9333}/json`)).json();
 const page = list.find(p => p.type === 'page' && p.url.includes('/ui/index.html'));
 if (!page) { console.error('Luch не запущен с --remote-debugging-port=9333'); process.exit(2); }
 

@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://translate.googleapis.com https://raw.githubusercontent.com; img-src * data: crx:; style-src 'self' 'unsafe-inline'">
+  <title>Luch</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="hot-zone"></div>
+
+  <nav id="tabbar">
+    <div class="tabbar-head">
+      <button id="space-btn" class="space-btn" title="Пространства">Пространство</button>
+      <span id="incognito-badge" hidden>Инкогнито</span>
+      <div class="spacer"></div>
+      <button id="btn-downloads" class="icon small" title="Загрузки (⌥⌘L)">
+        <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.8v6M5.6 8.6 8 11l2.4-2.4"/></svg>
+      </button>
+    </div>
+
+    <div id="pins"></div>
+    <!-- Закреплённые и обычные вкладки прокручиваются вместе, без ограничения по количеству -->
+    <div id="sidebar-scroll">
+      <div id="pinned"></div>
+      <button id="btn-new" class="new-tab">
+        <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
+        Новая вкладка
+      </button>
+      <div id="tabs"></div>
+    </div>
+
+    <div class="tabbar-foot">
+      <button id="btn-settings" class="icon small" title="Настройки (⌘,)">
+        <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>
+      </button>
+      <div id="spaces"></div>
+      <button id="btn-add-space" class="icon small" title="Новое пространство">
+        <svg viewBox="0 0 16 16"><path d="M8 4v8M4 8h8"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <main id="main">
+    <header id="toolbar">
+      <button id="btn-collapse" class="icon" title="Скрыть вкладки (⌘S)">
+        <svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10"/></svg>
+      </button>
+      <button id="btn-back" class="icon" title="Назад (⌘[)">
+        <svg viewBox="0 0 16 16"><path d="M10 3L5 8l5 5"/></svg>
+      </button>
+      <button id="btn-forward" class="icon" title="Вперёд (⌘])">
+        <svg viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg>
+      </button>
+      <button id="btn-reload" class="icon" title="Обновить (⌘R)">
+        <svg class="i-reload" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5V5h-2.5"/></svg>
+        <svg class="i-stop" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+      </button>
+      <div class="address-wrap" id="address-wrap">
+        <div id="load-glow"></div>
+        <div id="load-edge"></div>
+        <div id="address-display"></div>
+        <div id="load-line"></div>
+      </div>
+      <div id="ext-actions" hidden></div>
+      <button id="btn-translate" class="icon" title="Перевести страницу (⌘⇧Y)">
+        <svg viewBox="0 0 16 16"><path d="M2 3.5h6M5 2v1.5M3.5 3.5c.4 2.3 1.8 4 4 5M6.5 3.5c-.4 2.3-1.8 4-4 5M8.5 14l2.5-6 2.5 6M9.3 12h3.4"/></svg>
+      </button>
+      <button id="btn-chat" class="chat-btn" title="Чат с Gemini (⌘E)">
+        <svg viewBox="0 0 16 16"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H8l-3 2.5V11.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"/></svg>
+        Чат
+      </button>
+    </header>
+
+    <div id="stage">
+      <div id="views"></div>
+      <div id="split-divider" hidden></div>
+      <div id="zoom-toast" hidden></div>
+      <div id="notice" hidden><span class="notice-spin"></span><span id="notice-text"></span></div>
+
+      <div id="findbar" hidden>
+        <input id="find-input" placeholder="Найти на странице" spellcheck="false">
+        <span id="find-count"></span>
+        <button id="find-prev" class="icon small" title="Предыдущее"><svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4"/></svg></button>
+        <button id="find-next" class="icon small" title="Следующее"><svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg></button>
+        <button id="find-close" class="icon small" title="Закрыть"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+      </div>
+    </div>
+
+    <div id="cmdbar" hidden>
+      <div class="cmd-input-row">
+        <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+        <input id="cmd-input" spellcheck="false" autocomplete="off" placeholder="Поиск, адрес или вопрос к Gemini…">
+        <kbd id="cmd-mode" hidden></kbd>
+      </div>
+      <!-- Список выезжает снизу из-под поля адреса -->
+      <div class="cmd-drop">
+        <div class="cmd-drop-inner">
+          <div id="cmd-results"></div>
+          <div class="cmd-foot">
+            <span><kbd>↑↓</kbd> выбрать · <kbd>Enter</kbd> открыть · <kbd>⌘Enter</kbd> в новой вкладке · <kbd>/</kbd> скиллы</span>
+            <button id="cmd-go" class="go-btn">Перейти ↵</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside id="chat" hidden>
+    <div class="chat-head">
+      <div class="seg-group">
+        <button class="seg active" data-pane="ai">Gemini</button>
+        <button class="seg" data-pane="notes">Заметки</button>
+      </div>
+      <div class="spacer"></div>
+      <button id="ai-home" class="icon small" title="Новый чат"><svg viewBox="0 0 16 16"><path d="M10.5 2.5l3 3L6 13H3v-3z"/></svg></button>
+      <button id="chat-close" class="icon small" title="Закрыть (⌘E)"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+    </div>
+
+    <section id="pane-ai">
+      <webview id="gemini" partition="persist:gemini" allowpopups></webview>
+      <div class="chat-dock">
+        <button id="chat-page" class="page-chip" title="Спросить Gemini об этой странице">
+          <img id="chat-page-icon" alt="">
+          <span class="chip-text"><b id="chat-page-title"></b><span id="chat-page-host"></span></span>
+        </button>
+        <div id="skills-row"></div>
+      </div>
+    </section>
+
+    <section id="pane-notes" hidden>
+      <div id="notes-title" class="notes-title">—</div>
+      <textarea id="side-notes" placeholder="Заметки сохраняются для каждого сайта отдельно"></textarea>
+    </section>
+  </aside>
+
+  <!-- Всплывающие окна -->
+  <div id="space-menu" class="popover" hidden></div>
+
+  <div id="space-editor" class="popover" hidden>
+    <div id="space-editor-title" class="pop-title">Новое пространство</div>
+    <input id="space-editor-name" spellcheck="false" placeholder="Название, например «Работа»">
+    <div id="space-theme" class="theme-picker"></div>
+    <p class="pop-note">У каждого пространства свои входы на сайты, cookie и история.</p>
+    <div class="pop-actions">
+      <button id="space-delete" class="pill danger">Удалить</button>
+      <div class="spacer"></div>
+      <button id="space-cancel" class="pill">Отмена</button>
+      <button id="space-save" class="pill primary-pill">Создать</button>
+    </div>
+  </div>
+
+  <div id="downloads-pop" class="popover" hidden>
+    <div class="pop-title">Загрузки</div>
+    <div id="downloads-list"></div>
+  </div>
+
+  <div id="pin-tip" hidden>
+    <div id="pin-tip-title"></div>
+    <div id="pin-tip-host"></div>
+  </div>
+
+  <div id="rename-pop" class="popover" hidden>
+    <input id="rename-input" spellcheck="false">
+  </div>
+
+  <div id="history" class="overlay" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>История</h2>
+        <input id="history-search" placeholder="Поиск по истории" spellcheck="false">
+        <button id="history-clear" class="pill danger">Очистить</button>
+        <button class="icon small sheet-close" title="Закрыть (Esc)"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+      </div>
+      <div id="history-list" class="sheet-body"></div>
+    </div>
+  </div>
+
+  <div id="settings" class="overlay" hidden>
+    <div class="sheet settings-sheet">
+      <nav class="settings-nav">
+        <button data-section="general" class="active">Основные</button>
+        <button data-section="tabs">Вкладки</button>
+        <button data-section="privacy">Конфиденциальность</button>
+        <button data-section="spaces">Пространства</button>
+        <button data-section="extensions">Расширения</button>
+        <button data-section="skills">Скиллы Gemini</button>
+        <button data-section="translate">Перевод</button>
+        <button data-section="dns">DNS</button>
+        <button data-section="shortcuts">Сочетания клавиш</button>
+        <button data-section="import">Импорт</button>
+        <button data-section="data">Данные</button>
+      </nav>
+      <div class="settings-main">
+        <div class="sheet-head">
+          <h2 id="settings-title">Основные</h2>
+          <div class="spacer"></div>
+          <button class="icon small sheet-close" title="Закрыть (Esc)"><svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+        </div>
+        <div class="sheet-body">
+          <section data-section="general">
+            <label class="row">Поисковая система
+              <select id="set-search">
+                <option value="google">Google</option>
+                <option value="yandex">Яндекс</option>
+                <option value="duckduckgo">DuckDuckGo</option>
+                <option value="bing">Bing</option>
+              </select>
+            </label>
+            <label class="row">Оформление
+              <select id="set-theme">
+                <option value="system">Как в системе</option>
+                <option value="light">Светлое</option>
+                <option value="dark">Тёмное</option>
+              </select>
+            </label>
+            <label class="row">Открывать вкладки прошлого сеанса при запуске <input type="checkbox" id="set-restore"></label>
+            <h3>Избранное — плитки вверху колонки</h3>
+            <div id="set-pins"></div>
+            <p class="note">Чтобы добавить сайт, перетащите вкладку из колонки или ссылку со страницы на плитки.</p>
+          </section>
+
+          <section data-section="tabs" hidden>
+            <label class="row">Добавлять новые вкладки наверх списка <input type="checkbox" id="set-new-top"></label>
+            <label class="row">Подгонять ширину сайтов под окно <input type="checkbox" id="set-auto-fit"></label>
+            <label class="row">Автоматически скрывать колонку вкладок <input type="checkbox" id="set-autohide"></label>
+            <label class="row">⌘-клик по ссылке собирает вкладки в группу <input type="checkbox" id="set-cmd-groups"></label>
+            <label class="row">Закрывать вкладки, которыми не пользовались
+              <select id="set-cleanup">
+                <option value="0">Никогда</option>
+                <option value="12">Через 12 часов</option>
+                <option value="24">Через сутки</option>
+                <option value="168">Через неделю</option>
+              </select>
+            </label>
+            <p class="note">Закреплённые вкладки и папки никогда не закрываются автоматически.</p>
+          </section>
+
+          <section data-section="privacy" hidden>
+            <label class="row">Блокировать рекламу <input type="checkbox" id="set-block-ads"></label>
+            <label class="row">Блокировать трекеры <input type="checkbox" id="set-block-trackers"></label>
+            <label class="row">Скрывать баннеры о cookie <input type="checkbox" id="set-block-cookies"></label>
+            <p class="note">Фильтры EasyList и uBlock Origin. При первом включении списки загружаются около минуты.</p>
+          </section>
+
+          <section data-section="spaces" hidden>
+            <p class="note">У каждого пространства отдельные входы на сайты, cookie и данные — как профили. Переключение: ⌃1…⌃9.</p>
+            <div id="set-spaces"></div>
+            <button id="set-space-add" class="pill">+ Новое пространство</button>
+          </section>
+
+          <section data-section="extensions" hidden>
+            <p class="note">Устанавливайте расширения из официального магазина: откройте страницу расширения и нажмите «Установить». Иконки появятся справа в панели.</p>
+            <button id="set-open-store" class="pill primary-pill">Открыть Chrome Web Store</button>
+            <div id="set-extensions"></div>
+          </section>
+
+          <section data-section="skills" hidden>
+            <p class="note">Скилл — готовый запрос к Gemini. Вызывается кнопкой в чате или в командной строке через «/». Текст открытой страницы добавляется автоматически.</p>
+            <div id="set-skills"></div>
+            <button id="set-skill-add" class="pill">+ Новый скилл</button>
+          </section>
+
+          <section data-section="translate" hidden>
+            <label class="row">Переводчик
+              <select id="set-translate-engine">
+                <option value="online">Онлайн (Google)</option>
+              </select>
+            </label>
+            <p class="note">Перевод отправляет в Google только текст страницы.</p>
+            <label class="row">Переводить сайты автоматически <input type="checkbox" id="set-auto-translate"></label>
+            <label class="row">Язык перевода
+              <select id="set-translate-to">
+                <option value="ru">Русский</option>
+                <option value="en">Английский</option>
+                <option value="uk">Украинский</option>
+                <option value="kk">Казахский</option>
+                <option value="de">Немецкий</option>
+              </select>
+            </label>
+          </section>
+
+          <section data-section="dns" hidden>
+            <label class="row">DNS-сервер
+              <select id="set-dns-mode">
+                <option value="system">Как в системе (macOS)</option>
+                <option value="automatic">Защищённый у провайдера, если он поддерживает</option>
+                <option value="cloudflare">Cloudflare (1.1.1.1)</option>
+                <option value="google">Google Public DNS (8.8.8.8)</option>
+                <option value="quad9">Quad9 (9.9.9.9)</option>
+                <option value="adguard">AdGuard DNS (без рекламы)</option>
+                <option value="yandex">Яндекс DNS</option>
+                <option value="custom">Свой сервер…</option>
+              </select>
+            </label>
+            <label class="row" id="set-dns-custom-row" hidden>Адрес сервера
+              <input id="set-dns-custom" type="url" spellcheck="false" placeholder="https://dns.example.com/dns-query">
+            </label>
+            <p class="note" id="set-dns-status"></p>
+            <p class="note">Свой DNS работает по защищённому протоколу DNS-over-HTTPS: укажите адрес вида https://…/dns-query (можно несколько через пробел). Настройка действует на все пространства и окна Luch.</p>
+          </section>
+
+          <section data-section="shortcuts" hidden>
+            <div id="set-shortcuts"></div>
+          </section>
+
+          <section data-section="import" hidden>
+            <p class="note">Перенесите закладки, историю и входы на сайты из Chrome, Arc, Dia, Edge, Brave, Яндекс Браузера, Opera, Vivaldi или Firefox. Можно выбрать несколько браузеров сразу.</p>
+            <button id="set-import" class="pill primary-pill">Перенести из другого браузера</button>
+          </section>
+
+          <section data-section="data" hidden>
+            <div class="row">Кэш страниц <button class="pill" data-clear="cache">Очистить</button></div>
+            <div class="row">Cookie и входы на сайты во всех пространствах <button class="pill danger" data-clear="cookies">Удалить</button></div>
+            <div class="row">История <button class="pill danger" data-clear="history">Удалить</button></div>
+            <div class="row">Заметки к сайтам <button class="pill danger" data-clear="notes">Удалить</button></div>
+            <p id="set-version" class="note"></p>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Первое открытие: вступление и перенос данных из других браузеров -->
+  <div id="welcome" hidden>
+    <div class="w-sky">
+      <span class="w-cloud c1"></span><span class="w-cloud c2"></span><span class="w-cloud c3"></span><span class="w-cloud c4"></span>
+      <span class="w-beam"></span>
+    </div>
+
+    <section class="w-intro">
+      <h1 class="w-mark" aria-label="Luch"><span>L</span><span>u</span><span>c</span><span>h</span></h1>
+      <p class="w-tagline">Браузер, в котором светло думать</p>
+      <button id="w-start" class="w-btn w-start">Начать</button>
+    </section>
+
+    <section class="w-card" id="w-import" hidden>
+      <h2>Перенесите всё из прежнего браузера</h2>
+      <p class="w-sub">Закладки, история и входы на сайты — можно выбрать несколько браузеров сразу.</p>
+      <div id="w-browsers"></div>
+      <div class="w-what">
+        <label><input type="checkbox" id="w-bookmarks" checked> Закладки</label>
+        <label><input type="checkbox" id="w-history" checked> История</label>
+        <label><input type="checkbox" id="w-cookies" checked> Входы на сайты (cookie)</label>
+      </div>
+      <p class="w-note">macOS спросит разрешение на доступ к ключу браузера в связке ключей — нажмите «Разрешить», иначе входы на сайты не перенесутся.</p>
+      <div class="w-actions">
+        <button id="w-skip" class="w-btn ghost">Пропустить</button>
+        <button id="w-go" class="w-btn">Перенести</button>
+      </div>
+    </section>
+
+    <section class="w-card" id="w-progress" hidden>
+      <h2 id="w-progress-title">Переносим данные…</h2>
+      <div id="w-log"></div>
+      <div class="w-actions">
+        <button id="w-done" class="w-btn" hidden>Начать</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="luch-api.js"></script>
+  <script src="adblocker.js"></script>
+  <script src="blocker.js"></script>
+  <script src="webview-electron.js"></script>
+  <script src="space-theme.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
