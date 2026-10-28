@@ -1686,7 +1686,8 @@ window.luch.onDownload((info) => {
   downloads.set(info.id, info);
   $('btn-downloads').classList.toggle('active', [...downloads.values()].some(d => d.state === 'progressing'));
   // Сама открывается только для только что начатой загрузки, не для оставшихся с прошлого запуска
-  if (isNew && info.started) openDownloads();
+  // Обновления Luch скачиваются молча — панель для них не открываем
+  if (isNew && info.started && !info.url?.startsWith(RELEASE_FILES)) openDownloads();
   else if (!$('downloads-pop').hidden) renderDownloads();
 });
 
@@ -2691,28 +2692,52 @@ function waitForDownload(id) {
   });
 }
 
-function installWithHelper(dmg, sha256) {
+function askHelper(message, reply) {
   return new Promise((resolve, reject) => {
     const port = chrome.runtime.connectNative('org.luch.importer');
     port.onMessage.addListener((m) => {
-      if (m.type === 'update') resolve();
+      if (m.type === reply) resolve();
       else if (m.type === 'error') reject(new Error(m.message));
     });
     port.onDisconnect.addListener(() => reject(new Error(chrome.runtime.lastError?.message || 'Помощник Luch завершился')));
-    port.postMessage({ cmd: 'update', dmg, sha256 });
+    port.postMessage(message);
   });
 }
 
-async function installUpdate() {
+// Готовит новую версию рядом с текущей; заменит её помощник, когда Luch закроется.
+// restart — сразу перезапустить Luch с новой версией
+let stagedVersion = null;
+let preparing = null;
+async function prepareUpdate({ restart = false } = {}) {
   const u = pendingUpdate;
   if (!u) return;
-  $('set-update-install').disabled = true;
-  try {
+  if (stagedVersion === u.version) {
+    if (restart) await askHelper({ cmd: 'restart' }, 'restart');
+    return;
+  }
+  preparing ||= (async () => {
     updateStatus(`Скачиваю Luch ${u.version}…`);
     const id = await chrome.downloads.download({ url: u.url, filename: `Luch-update/${u.name}`, conflictAction: 'overwrite', saveAs: false });
     const item = await waitForDownload(id);
-    updateStatus('Проверяю и устанавливаю…');
-    await installWithHelper(item.filename, u.sha256);
+    updateStatus('Проверяю и готовлю обновление…');
+    await askHelper({ cmd: 'update', dmg: item.filename, sha256: u.sha256, restart }, 'update');
+    stagedVersion = u.version;
+  })().finally(() => { preparing = null; });
+  await preparing;
+}
+
+function showStaged() {
+  $('update-badge').hidden = false;
+  $('update-badge').textContent = `Luch ${stagedVersion} установится при выходе — перезапустить сейчас`;
+  updateStatus(`Luch ${stagedVersion} готов и установится, когда вы закроете Luch. Можно перезапустить сразу — вкладки восстановятся.`);
+  $('set-update-row').hidden = false;
+  $('set-update-install').textContent = 'Перезапустить сейчас';
+}
+
+async function installUpdate() {
+  $('set-update-install').disabled = true;
+  try {
+    await prepareUpdate({ restart: true });
     updateStatus('Luch перезапускается — вкладки восстановятся.');
   } catch (e) {
     updateStatus(`Не удалось обновить: ${e.message}`, true);
@@ -2724,20 +2749,34 @@ $('set-update-check').onclick = async () => {
   updateStatus('Проверяю…');
   try {
     const u = await checkForUpdate();
-    updateStatus(u ? `Доступна версия ${u.version}. Luch перезапустится, вкладки восстановятся.` : 'У вас последняя версия.');
+    if (u && stagedVersion === u.version) showStaged();
+    else updateStatus(u ? `Доступна версия ${u.version}. Luch перезапустится, вкладки восстановятся.` : 'У вас последняя версия.');
   } catch (e) {
     updateStatus(`Не удалось проверить: ${e.message}`, true);
   }
 };
 $('set-update-install').onclick = installUpdate;
 $('update-badge').onclick = () => {
+  if (stagedVersion) { installUpdate(); return; }
   openSettings('general');
   updateStatus(`Доступна версия ${pendingUpdate.version}. Luch перезапустится, вкладки восстановятся.`);
 };
 
 // Проверка через минуту после запуска и затем раз в шесть часов
 if (!INCOGNITO) {
-  const autoCheck = () => { if (settings().autoUpdate) checkForUpdate().catch(() => {}); };
+  // Найденная версия сразу скачивается и готовится, а ставится при выходе из Luch
+  const autoCheck = async () => {
+    if (!settings().autoUpdate) return;
+    // При нескольких окнах обновление готовит одно — то, что открыто раньше остальных
+    const windows = await chrome.tabs.query({ url: location.origin + location.pathname + '*' });
+    const me = await chrome.tabs.getCurrent();
+    if (me && windows.some(t => t.id < me.id)) return;
+    try {
+      const u = await checkForUpdate();
+      if (u && stagedVersion !== u.version) await prepareUpdate();
+      if (stagedVersion) showStaged();
+    } catch {}
+  };
   setTimeout(autoCheck, 60 * 1000);
   setInterval(autoCheck, 6 * 60 * 60 * 1000);
 }

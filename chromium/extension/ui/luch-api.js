@@ -173,6 +173,7 @@
     name: (d.filename || d.finalUrl || d.url || '').split('/').pop() || 'Файл',
     received: d.bytesReceived || 0,
     total: d.totalBytes || 0,
+    url: d.url || '',
     state: d.state === 'in_progress' ? (d.paused ? 'interrupted' : 'progressing') : d.state === 'complete' ? 'completed' : 'cancelled',
   });
   // started — загрузка началась в этом сеансе. Остальные события приходят и о старых загрузках:

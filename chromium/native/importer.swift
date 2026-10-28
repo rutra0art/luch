@@ -7,7 +7,8 @@
 //   {"cmd":"detect"}                                  → {"type":"detect","browsers":[…]}
 //   {"cmd":"read","browser","profile","what":{…}}     → {"type":"history"|"bookmarks"|"cookies","items":[…]} частями,
 //                                                       {"type":"error","label","message"}, в конце {"type":"done"}
-//   {"cmd":"update","dmg","sha256"}                   → {"type":"update"}: установка новой версии Luch (см. update())
+//   {"cmd":"update","dmg","sha256","restart"?}        → {"type":"update"}: подготовка новой версии Luch (см. update())
+//   {"cmd":"restart"}                                 → перезапуск Luch с подготовленной версией
 import CommonCrypto
 import Foundation
 
@@ -365,20 +366,40 @@ func update(_ msg: [String: Any]) throws {
   // Образ проверен по контрольной сумме — снимаем пометку «скачано из интернета», иначе macOS
   // не даст запустить обновлённый Luch без подтверждения в настройках
   _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", staged.path])
+  // Образ из папки обновлений больше не нужен — не копим их в «Загрузках»
+  if dmg.deletingLastPathComponent().lastPathComponent == "Luch-update" {
+    try? FileManager.default.removeItem(at: dmg)
+    try? FileManager.default.removeItem(at: dmg.deletingLastPathComponent())  // только если папка пуста
+  }
 
-  // Закрыть Luch так же, как ⌘Q (на SIGTERM Chromium выходит штатно, вкладки восстановятся),
-  // дождаться выхода, заменить и запустить
+  // Замена — когда Luch закроется: сам пользователем или по «Перезапустить сейчас» (флаг .restart,
+  // тогда новая версия сразу запускается). Повторная подготовка той же версии запускает ещё один
+  // такой процесс; меняет приложение только первый, кто займёт .lock
   let pid = getppid()
   guard pid > 1 else { throw UpdateError("Не удалось определить запущенный Luch") }
   let script = """
-    kill -TERM \(pid)
-    for i in $(seq 240); do kill -0 \(pid) 2>/dev/null || break; sleep 0.5; done
-    kill -0 \(pid) 2>/dev/null && exit 1
-    mv "$1" "$1.old" && mv "$2" "$1" && rm -rf "$1.old"
-    open "$1"
+    while kill -0 \(pid) 2>/dev/null; do sleep 1; done
+    sleep 1
+    mkdir "$2.lock" 2>/dev/null || exit 0
+    if [ -d "$2" ]; then mv "$1" "$1.old" && mv "$2" "$1" && rm -rf "$1.old"; fi
+    rmdir "$2.lock"
+    if [ -f "$2.restart" ]; then rm -f "$2.restart"; open "$1"; fi
     """
   try spawnDetached(["/bin/sh", "-c", script, "luch-update", app.path, staged.path])
+  if msg["restart"] as? Bool == true { try restart() }
   send(["type": "update"])
+}
+
+// «Перезапустить сейчас»: флаг для процесса замены и штатный выход Luch (SIGTERM, как ⌘Q)
+func restart() throws {
+  let app = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+  let staged = app.deletingLastPathComponent().appendingPathComponent(".Luch-update.app")
+  guard exists(staged) else { throw UpdateError("Обновление ещё не подготовлено") }
+  FileManager.default.createFile(atPath: staged.path + ".restart", contents: nil)
+  let pid = getppid()
+  guard pid > 1 else { throw UpdateError("Не удалось определить запущенный Luch") }
+  kill(pid, SIGTERM)
 }
 
 while let msg = readMessage() {
@@ -387,6 +408,8 @@ while let msg = readMessage() {
   case "read": read(msg)
   case "update":
     do { try update(msg) } catch { send(["type": "error", "label": "Обновление", "message": error.localizedDescription]) }
+  case "restart":
+    do { try restart(); send(["type": "restart"]) } catch { send(["type": "error", "label": "Обновление", "message": error.localizedDescription]) }
   default: send(["type": "error", "label": "Импорт", "message": "Неизвестная команда"])
   }
   send(["type": "done"])
