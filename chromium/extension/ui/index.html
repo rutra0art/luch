@@ -220,7 +220,7 @@
             </label>
             <label class="row">Открывать вкладки прошлого сеанса при запуске <input type="checkbox" id="set-restore"></label>
             <h3>Обновления</h3>
-            <div class="row"><span>Luch <span id="set-version"></span></span><button id="set-update-check" class="pill">Проверить</button></div>
+            <div class="row"><span>Luch <span id="set-luch-version"></span></span><button id="set-update-check" class="pill">Проверить</button></div>
             <label class="row">Устанавливать обновления автоматически <input type="checkbox" id="set-auto-update"></label>
             <p class="note" id="set-update-status"></p>
             <div class="row" id="set-update-row" hidden><button id="set-update-install" class="pill primary-pill">Обновить и перезапустить</button></div>
@@ -339,6 +339,8 @@
             <div class="row">Cookie и входы на сайты во всех пространствах <button class="pill danger" data-clear="cookies">Удалить</button></div>
             <div class="row">История <button class="pill danger" data-clear="history">Удалить</button></div>
             <div class="row">Заметки к сайтам <button class="pill danger" data-clear="notes">Удалить</button></div>
+            <div class="row">Данные панели Gemini <button class="pill danger" data-clear="gemini">Сбросить</button></div>
+            <p class="note">Если Gemini пишет «не поддерживается в вашей стране», хотя DNS или VPN уже настроены, — сбросьте его данные: Google помнит прежнее решение в cookie. После сброса войдите в аккаунт снова.</p>
             <p id="set-version" class="note"></p>
           </section>
         </div>

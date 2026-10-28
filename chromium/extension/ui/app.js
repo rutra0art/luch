@@ -1859,6 +1859,30 @@ function showPane(name) {
 }
 for (const b of document.querySelectorAll('.seg')) b.onclick = () => showPane(b.dataset.pane);
 
+// Стирает cookie, кэш и хранилище панели Gemini (раздел persist:gemini) и открывает его заново
+async function resetGemini() {
+  const all = { appcache: true, cache: true, cookies: true, sessionCookies: true, persistentCookies: true,
+    fileSystems: true, indexedDB: true, localStorage: true, webSQL: true };
+  if (!gemini.src) { gemini.src = 'about:blank'; await new Promise(r => gemini.addEventListener('loadstop', r, { once: true })); }
+  await new Promise(r => gemini.clearData({ since: 0 }, all, r));
+  geminiReady = null;
+  gemini.loadURL(GEMINI_URL);
+}
+
+// Google запоминает в cookie решение «Gemini не поддерживается в вашей стране» и показывает его,
+// даже когда DNS или VPN уже настроены. Увидели такую страницу — один раз за запуск сами
+// сбрасываем данные панели и открываем Gemini заново
+const GEMINI_BLOCKED = /не поддерживается в вашей стране|isn.t supported in your country|not (yet )?available in your country/i;
+let geminiHealed = false;
+gemini.addEventListener('did-stop-loading', async () => {
+  if (geminiHealed) return;
+  const text = await gemini.executeJavaScript('document.body ? document.body.innerText.slice(0, 5000) : ""').catch(() => '');
+  if (!GEMINI_BLOCKED.test(text)) return;
+  geminiHealed = true;
+  showNotice('Gemini помнил старую страну — сбрасываю его данные. Войдите в Google снова');
+  await resetGemini().catch(() => {});
+});
+
 function loadGemini() {
   if (!geminiReady) {
     geminiReady = new Promise((resolve) => gemini.addEventListener('did-stop-loading', resolve, { once: true }));
@@ -2387,7 +2411,7 @@ async function openSettings(section = 'general') {
   $('set-theme').value = s.theme;
   $('set-restore').checked = s.restore;
   $('set-auto-update').checked = s.autoUpdate;
-  $('set-version').textContent = LUCH_VERSION;
+  $('set-luch-version').textContent = LUCH_VERSION;
   $('set-new-top').checked = s.newTabsTop;
   $('set-auto-fit').checked = s.autoFit;
   $('set-autohide').checked = s.autohide;
@@ -2802,10 +2826,12 @@ for (const b of document.querySelectorAll('[data-clear]')) {
       cookies: 'Удалить все cookie? Вы выйдете из всех сайтов во всех пространствах.',
       history: 'Удалить всю историю?',
       notes: 'Удалить все заметки к сайтам?',
+      gemini: 'Сбросить cookie и кэш панели Gemini? Нужно будет снова войти в Google в панели.',
     }[what];
     if (!confirm(ask)) return;
     if (what === 'notes') store.set('notes', {});
     else if (what === 'history') store.set('history', []);
+    else if (what === 'gemini') await resetGemini();
     else await window.luch.clearData(what);
     const label = b.textContent;
     b.textContent = 'Готово';
