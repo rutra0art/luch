@@ -1546,7 +1546,7 @@ index f8363d5b29..fcc8308924 100644
  MAC_CREATOR_CODE=Cr24
  MAC_TEAM_ID=
 diff --git a/chrome/browser/extensions/api/messaging/launch_context_posix.cc b/chrome/browser/extensions/api/messaging/launch_context_posix.cc
-index 686da41336..1d0d795400 100644
+index 686da41336..5f8e125dc8 100644
 --- a/chrome/browser/extensions/api/messaging/launch_context_posix.cc
 +++ b/chrome/browser/extensions/api/messaging/launch_context_posix.cc
 @@ -18,6 +18,11 @@
@@ -1595,7 +1595,7 @@ index 686da41336..1d0d795400 100644
  }  // namespace
  
  // static
-@@ -42,12 +74,37 @@ base::FilePath LaunchContext::FindManifest(const std::string& host_name,
+@@ -42,7 +74,32 @@ base::FilePath LaunchContext::FindManifest(const std::string& host_name,
                                             bool allow_user_level_hosts,
                                             std::string& error_message) {
    base::FilePath result;
@@ -1614,26 +1614,21 @@ index 686da41336..1d0d795400 100644
 +            .Append("chrome-extension://pejdijmoenmkgeppbflobdenhhabjlaj/")
 +            .Append("chrome-extension://mfbcdcnpokpoajjciilocoachedjkima/"));
 +  }
-+#endif
-+  if (result.empty() && allow_user_level_hosts) {
-     result = FindManifestInDir(chrome::DIR_USER_NATIVE_MESSAGING, host_name);
-   }
-   if (result.empty()) {
-     result = FindManifestInDir(chrome::DIR_NATIVE_MESSAGING, host_name);
-   }
-+#if BUILDFLAG(IS_MAC)
-+  // Luch: помощник импорта из других браузеров лежит внутри Luch.app
-+  if (result.empty() && host_name == "org.luch.importer") {
++  // Luch: помощник импорта и обновлений лежит внутри Luch.app. Описание
++  // пишется заново при каждом обращении: Luch могли перенести (например, из
++  // образа в «Программы»), и старый путь запустил бы помощника другой копии.
++  if (host_name == "org.luch.importer") {
 +    result = WriteLuchManifest(
-+        host_name, "Luch: import from other browsers",
++        host_name, "Luch: import from other browsers and updates",
 +        base::apple::OuterBundlePath().Append(
 +            "Contents/Resources/luch-importer"),
 +        base::ListValue());
 +  }
 +#endif
- 
++  if (result.empty() && allow_user_level_hosts) {
+     result = FindManifestInDir(chrome::DIR_USER_NATIVE_MESSAGING, host_name);
+   }
    if (result.empty()) {
-     error_message = "Can't find native messaging host " + host_name;
 diff --git a/chrome/browser/ui/browser.cc b/chrome/browser/ui/browser.cc
 index 4e9be10d04..e32cbc3fde 100644
 --- a/chrome/browser/ui/browser.cc

@@ -366,11 +366,12 @@ func update(_ msg: [String: Any]) throws {
   // не даст запустить обновлённый Luch без подтверждения в настройках
   _ = try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", staged.path])
 
-  // Закрыть Luch так же, как ⌘Q (вкладки восстановятся), дождаться выхода, заменить и запустить
+  // Закрыть Luch так же, как ⌘Q (на SIGTERM Chromium выходит штатно, вкладки восстановятся),
+  // дождаться выхода, заменить и запустить
   let pid = getppid()
   guard pid > 1 else { throw UpdateError("Не удалось определить запущенный Luch") }
   let script = """
-    osascript -e "tell application \\"$1\\" to quit"
+    kill -TERM \(pid)
     for i in $(seq 240); do kill -0 \(pid) 2>/dev/null || break; sleep 0.5; done
     kill -0 \(pid) 2>/dev/null && exit 1
     mv "$1" "$1.old" && mv "$2" "$1" && rm -rf "$1.old"
