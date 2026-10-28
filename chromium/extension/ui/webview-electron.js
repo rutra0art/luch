@@ -101,6 +101,8 @@
 
     // Сочетания клавиш Luch и свайпы двумя пальцами (назад/вперёд) работают и на страницах сайтов
     wv.addContentScripts([{ name: 'luch-keys', matches: ['<all_urls>'], js: { files: ['ui/guest-keys.js', 'ui/guest-swipe.js'] }, run_at: 'document_start' }]);
+    // Входы из Паролей Apple под полями логина и пароля, во всех фреймах — формы входа часто во фрейме
+    wv.addContentScripts([{ name: 'luch-passwords', matches: ['http://*/*', 'https://*/*'], js: { files: ['ui/guest-passwords.js'] }, all_frames: true, run_at: 'document_idle' }]);
 
     // Пункты Luch в контекстном меню страницы (остальное — стандартное меню Chromium)
     const menuItems = [

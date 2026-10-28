@@ -57,8 +57,19 @@
     e.stopPropagation();
     runCommand(...hit);
   }, true);
+  // Сообщения от страниц вкладок получают все окна Luch; выполняет то окно, с которым работают.
+  // Пока фокус на странице, document.hasFocus() в окне Luch ложно, поэтому смотрим на окно целиком
+  const isActiveWindow = async () => document.hasFocus()
+    || (document.activeElement?.tagName === 'WEBVIEW' && (await chrome.windows.getLastFocused()).id === windowId);
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type === 'luch:key' && document.hasFocus() && KEYS[msg.key]) runCommand(...KEYS[msg.key]);
+    if (!['luch:key', 'luch:page-click', 'luch:open-settings'].includes(msg?.type)) return;
+    isActiveWindow().then((active) => {
+      if (!active) return;
+      if (msg.type === 'luch:key' && KEYS[msg.key]) runCommand(...KEYS[msg.key]);
+      if (msg.type === 'luch:page-click') dispatchEvent(new Event('luch-page-click'));
+      // «Подключить Пароли Apple…» в списке под полем входа (guest-passwords.js)
+      if (msg.type === 'luch:open-settings') runCommand('settings', msg.section === 'passwords' ? 'passwords' : 'general');
+    });
   });
 
   // ---------- Ссылки в новых вкладках и окнах ----------
@@ -162,11 +173,13 @@
     total: d.totalBytes || 0,
     state: d.state === 'in_progress' ? (d.paused ? 'interrupted' : 'progressing') : d.state === 'complete' ? 'completed' : 'cancelled',
   });
-  const pushDownload = async (id) => {
+  // started — загрузка началась в этом сеансе. Остальные события приходят и о старых загрузках:
+  // при запуске Chromium помечает недокачанные прошлые загрузки как прерванные
+  const pushDownload = async (id, started = false) => {
     const [d] = await chrome.downloads.search({ id });
-    if (d) for (const fn of downloadHandlers) fn(downloadInfo(d));
+    if (d) for (const fn of downloadHandlers) fn({ ...downloadInfo(d), started });
   };
-  chrome.downloads.onCreated.addListener((d) => pushDownload(d.id));
+  chrome.downloads.onCreated.addListener((d) => pushDownload(d.id, true));
   chrome.downloads.onChanged.addListener((d) => pushDownload(d.id));
   // Пока что-то качается, обновляем прогресс раз в полсекунды
   setInterval(async () => {

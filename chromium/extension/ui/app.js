@@ -1279,6 +1279,10 @@ document.addEventListener('mousedown', (e) => {
   if (!$('cmdbar').hidden && !e.target.closest('#cmdbar, #address-wrap')) closeCommandBar();
 });
 window.addEventListener('blur', closePopovers);
+// Щелчок по странице сайта не доходит до интерфейса: о нём сообщает guest-keys.js,
+// а переход во вкладку с клавиатуры виден по фокусу
+addEventListener('luch-page-click', closePopovers);
+document.addEventListener('focusin', (e) => { if (e.target.tagName === 'WEBVIEW') closePopovers(); });
 $('btn-add-space').onclick = () => openSpaceEditor(null, $('btn-add-space'));
 
 // ---------- Панель инструментов ----------
@@ -1630,7 +1634,8 @@ window.luch.onDownload((info) => {
   const isNew = !downloads.has(info.id);
   downloads.set(info.id, info);
   $('btn-downloads').classList.toggle('active', [...downloads.values()].some(d => d.state === 'progressing'));
-  if (isNew) openDownloads();
+  // Сама открывается только для только что начатой загрузки, не для оставшихся с прошлого запуска
+  if (isNew && info.started) openDownloads();
   else if (!$('downloads-pop').hidden) renderDownloads();
 });
 
@@ -2247,7 +2252,8 @@ setInterval(() => {
 
 const SECTION_TITLES = {
   general: 'Основные', tabs: 'Вкладки', privacy: 'Конфиденциальность', spaces: 'Пространства',
-  extensions: 'Расширения', skills: 'Скиллы Gemini', translate: 'Перевод', dns: 'DNS', shortcuts: 'Сочетания клавиш', import: 'Импорт', data: 'Данные',
+  extensions: 'Расширения', skills: 'Скиллы Gemini', translate: 'Перевод', dns: 'DNS', passwords: 'Пароли Apple',
+  shortcuts: 'Сочетания клавиш', import: 'Импорт', data: 'Данные',
 };
 
 async function openSettings(section = 'general') {
@@ -2281,6 +2287,7 @@ function showSection(name) {
   for (const s of document.querySelectorAll('.settings-main section')) s.hidden = s.dataset.section !== name;
   $('settings-title').textContent = SECTION_TITLES[name];
   if (name === 'extensions') renderSettingsExtensions();
+  if (name === 'passwords') loadPasswordsSettings();
 }
 for (const b of document.querySelectorAll('.settings-nav button')) b.onclick = () => showSection(b.dataset.section);
 
@@ -2428,6 +2435,60 @@ async function saveDns() {
 
 $('set-dns-mode').addEventListener('change', saveDns);
 $('set-dns-custom').addEventListener('change', saveDns);
+
+// Пароли Apple: подключение к помощнику macOS по шестизначному коду (background.js)
+const applePasswords = (op, extra) => chrome.runtime.sendMessage({ type: 'luch:passwords', op, ...extra })
+  .then((r) => (r?.ok ? r.result : Promise.reject(new Error(r?.error || 'Фоновая часть Luch не ответила'))));
+
+function passwordsView(state, text, error = false) {
+  $('set-pw-status').textContent = text;
+  $('set-pw-status').classList.toggle('error', error);
+  $('set-pw-connect-row').hidden = state !== 'connect';
+  $('set-pw-pin-row').hidden = state !== 'pin';
+  $('set-pw-disconnect-row').hidden = state !== 'paired';
+}
+
+async function loadPasswordsSettings() {
+  passwordsView('', 'Проверяю…');
+  try {
+    const s = await applePasswords('status');
+    if (!s.available) passwordsView('', `Помощник паролей Apple недоступен: ${s.error}`, true);
+    else if (s.paired) passwordsView('paired', 'Подключено. Входы появляются под полями логина и пароля на сайтах.');
+    else passwordsView('connect', 'Не подключено.');
+  } catch (e) {
+    passwordsView('', e.message, true);
+  }
+}
+
+$('set-pw-connect').onclick = async () => {
+  passwordsView('', 'Жду окно macOS с кодом…');
+  try {
+    await applePasswords('request-pin');
+    $('set-pw-pin').value = '';
+    passwordsView('pin', 'Введите шестизначный код из окна macOS.');
+    $('set-pw-pin').focus();
+  } catch (e) {
+    passwordsView('connect', e.message, true);
+  }
+};
+
+$('set-pw-pin').addEventListener('input', async () => {
+  const pin = $('set-pw-pin').value.replace(/\D/g, '');
+  $('set-pw-pin').value = pin;
+  if (pin.length !== 6) return;
+  passwordsView('', 'Проверяю код…');
+  try {
+    await applePasswords('confirm-pin', { pin });
+    passwordsView('paired', 'Подключено. Входы появляются под полями логина и пароля на сайтах.');
+  } catch (e) {
+    passwordsView('connect', e.message, true);
+  }
+});
+
+$('set-pw-disconnect').onclick = async () => {
+  await applePasswords('forget').catch(() => {});
+  loadPasswordsSettings();
+};
 
 $('set-open-store').onclick = () => { closeSettings(); createTab('https://chromewebstore.google.com/'); };
 

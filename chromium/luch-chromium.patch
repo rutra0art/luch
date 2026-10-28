@@ -1,13 +1,14 @@
 diff --git a/chrome/BUILD.gn b/chrome/BUILD.gn
-index 06bfcf5a90..5c2ac33ff8 100644
+index 06bfcf5a90..1a78284cdb 100644
 --- a/chrome/BUILD.gn
 +++ b/chrome/BUILD.gn
-@@ -691,6 +691,50 @@ if (is_win) {
+@@ -691,6 +691,52 @@ if (is_win) {
      outputs = [ "{{bundle_resources_dir}}/{{source_file_part}}" ]
    }
  
 +  bundle_data("luch_extension") {
 +    sources = [
++      "browser/resources/luch_extension/apple-passwords.js",
 +      "browser/resources/luch_extension/background.js",
 +      "browser/resources/luch_extension/manifest.json",
 +    ]
@@ -20,6 +21,7 @@ index 06bfcf5a90..5c2ac33ff8 100644
 +      "browser/resources/luch_extension/ui/app.js",
 +      "browser/resources/luch_extension/ui/blocker.js",
 +      "browser/resources/luch_extension/ui/guest-keys.js",
++      "browser/resources/luch_extension/ui/guest-passwords.js",
 +      "browser/resources/luch_extension/ui/guest-swipe.js",
 +      "browser/resources/luch_extension/ui/index.html",
 +      "browser/resources/luch_extension/ui/luch-api.js",
@@ -53,7 +55,7 @@ index 06bfcf5a90..5c2ac33ff8 100644
    bundle_data("chrome_asset_catalog") {
      sources = [ "app/theme/$branding_path_component/mac/Assets.car" ]
      outputs = [ "{{bundle_resources_dir}}/{{source_file_part}}" ]
-@@ -706,6 +750,10 @@ if (is_win) {
+@@ -706,6 +752,10 @@ if (is_win) {
        ":chrome_app_icon",
        ":chrome_app_strings",
        ":chrome_asset_catalog",
@@ -1543,7 +1545,7 @@ index f8363d5b29..fcc8308924 100644
  MAC_CREATOR_CODE=Cr24
  MAC_TEAM_ID=
 diff --git a/chrome/browser/extensions/api/messaging/launch_context_posix.cc b/chrome/browser/extensions/api/messaging/launch_context_posix.cc
-index 686da41336..bcc5b13ad8 100644
+index 686da41336..1d0d795400 100644
 --- a/chrome/browser/extensions/api/messaging/launch_context_posix.cc
 +++ b/chrome/browser/extensions/api/messaging/launch_context_posix.cc
 @@ -18,6 +18,11 @@
@@ -1558,35 +1560,74 @@ index 686da41336..bcc5b13ad8 100644
  #include "net/base/file_stream.h"
  
  namespace extensions {
-@@ -48,6 +53,33 @@ base::FilePath LaunchContext::FindManifest(const std::string& host_name,
+@@ -35,6 +40,33 @@ base::FilePath FindManifestInDir(int dir_key, const std::string& host_name) {
+   return base::FilePath();
+ }
+ 
++#if BUILDFLAG(IS_MAC)
++// Luch: описание помощника записывается в папку профиля. Путь в описании
++// должен быть абсолютным, поэтому Luch пишет его сам, а не берёт готовый файл.
++base::FilePath WriteLuchManifest(const std::string& host_name,
++                                 const std::string& description,
++                                 const base::FilePath& helper,
++                                 base::ListValue origins) {
++  base::FilePath dir;
++  if (!base::PathService::Get(chrome::DIR_USER_NATIVE_MESSAGING, &dir) ||
++      !base::PathExists(helper) || !base::CreateDirectory(dir)) {
++    return base::FilePath();
++  }
++  base::DictValue manifest;
++  manifest.Set("name", host_name);
++  manifest.Set("description", description);
++  manifest.Set("path", helper.value());
++  manifest.Set("type", "stdio");
++  manifest.Set("allowed_origins",
++               std::move(origins).Append(
++                   "chrome-extension://amllkaplhiohpdnbaglpilidkdafnpbl/"));
++  std::string json;
++  base::JSONWriter::Write(manifest, &json);
++  const base::FilePath path = dir.Append(host_name + ".json");
++  return base::WriteFile(path, json) ? path : base::FilePath();
++}
++#endif
++
+ }  // namespace
+ 
+ // static
+@@ -42,12 +74,37 @@ base::FilePath LaunchContext::FindManifest(const std::string& host_name,
+                                            bool allow_user_level_hosts,
+                                            std::string& error_message) {
+   base::FilePath result;
+-  if (allow_user_level_hosts) {
++#if BUILDFLAG(IS_MAC)
++  // Luch: Пароли Apple — системный помощник macOS, тот же, что у расширения
++  // iCloud Passwords. Описание пишется всегда: в готовом файле от macOS нет
++  // Luch среди разрешённых расширений. Расширения Apple остаются в списке.
++  if (host_name == "com.apple.passwordmanager") {
++    result = WriteLuchManifest(
++        host_name, "PasswordManagerBrowserExtensionHelper",
++        base::FilePath("/System/Cryptexes/App/System/Library/CoreServices/"
++                       "PasswordManagerBrowserExtensionHelper.app/Contents/"
++                       "MacOS/PasswordManagerBrowserExtensionHelper"),
++        base::ListValue()
++            .Append("chrome-extension://pejdijmoenmkgeppbflobdenhhabjlaj/")
++            .Append("chrome-extension://mfbcdcnpokpoajjciilocoachedjkima/"));
++  }
++#endif
++  if (result.empty() && allow_user_level_hosts) {
+     result = FindManifestInDir(chrome::DIR_USER_NATIVE_MESSAGING, host_name);
+   }
    if (result.empty()) {
      result = FindManifestInDir(chrome::DIR_NATIVE_MESSAGING, host_name);
    }
 +#if BUILDFLAG(IS_MAC)
-+  // Luch: помощник импорта из других браузеров лежит внутри Luch.app.
-+  // Путь в описании помощника должен быть абсолютным, поэтому описание
-+  // записывается заново при каждом запуске — приложение могли переместить.
++  // Luch: помощник импорта из других браузеров лежит внутри Luch.app
 +  if (result.empty() && host_name == "org.luch.importer") {
-+    base::FilePath dir;
-+    const base::FilePath helper = base::apple::OuterBundlePath().Append(
-+        "Contents/Resources/luch-importer");
-+    if (base::PathService::Get(chrome::DIR_USER_NATIVE_MESSAGING, &dir) &&
-+        base::PathExists(helper) && base::CreateDirectory(dir)) {
-+      base::DictValue manifest;
-+      manifest.Set("name", host_name);
-+      manifest.Set("description", "Luch: import from other browsers");
-+      manifest.Set("path", helper.value());
-+      manifest.Set("type", "stdio");
-+      manifest.Set("allowed_origins",
-+                   base::ListValue().Append(
-+                       "chrome-extension://amllkaplhiohpdnbaglpilidkdafnpbl/"));
-+      std::string json;
-+      base::JSONWriter::Write(manifest, &json);
-+      const base::FilePath path = dir.Append(host_name + ".json");
-+      if (base::WriteFile(path, json)) {
-+        result = path;
-+      }
-+    }
++    result = WriteLuchManifest(
++        host_name, "Luch: import from other browsers",
++        base::apple::OuterBundlePath().Append(
++            "Contents/Resources/luch-importer"),
++        base::ListValue());
 +  }
 +#endif
  

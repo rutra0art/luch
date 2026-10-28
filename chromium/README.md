@@ -12,12 +12,13 @@ The Luch interface (the same `index.html`, `app.js` and `style.css` as the Elect
   - Import from other browsers: `native/importer.swift` (built by `npm run build:importer` into `luch-importer`, bundled into `Luch.app/Contents/Resources`) reads bookmarks, history and cookies of Chrome, Arc, Dia, Edge, Brave, Yandex, Vivaldi, Opera, Chromium and Firefox; Luch talks to it through native messaging (`org.luch.importer`).
   - `ui/space-theme.js` — space themes: 1–3 colour dots on a pad (position = hue and lightness), colour rows (vivid, pastel, deep, grey), auto/light/dark mode, a saturation wave and a grain dial; the window background and the new tab follow the theme of the current space.
   - The DNS section of the settings sets Chromium's DNS-over-HTTPS server (presets or your own `https://…/dns-query` address).
+  - Apple Passwords: `apple-passwords.js` (in the background service worker) talks to macOS's `PasswordManagerBrowserExtensionHelper` — the helper behind Apple's iCloud Passwords extension for Chrome — over native messaging (`com.apple.passwordmanager`). Pairing uses the six-digit code macOS shows (SRP, RFC 5054), then requests are AES-GCM encrypted; the protocol follows [apw](https://github.com/bendews/apw) (GPL-3.0). The session key lives in `chrome.storage.session` only, so the code is asked again after Luch restarts, as in Apple's extension. `ui/guest-passwords.js` shows the site's accounts under login fields and fills the chosen one; the site is taken from the message sender, never from the page.
 - `luch-chromium.patch` — changes to the Chromium source tree:
   - product name and bundle id `Luch` / `org.luch.Luch`, profile folder `~/Library/Application Support/Luch`, Russian strings say "Luch";
   - the built-in extension is bundled into `Luch.app/Contents/Resources/luch-extension`, loaded at startup and opened as the Luch window;
   - `<webview>` and `settingsPrivate` (for the DNS setting) are allowed for the built-in extension only (by its fixed id);
   - `chrome.cookies.set` accepts `storeId: "luch-partition:<name>"` from the built-in extension, so imported logins land in the storage of a Luch space (`<webview partition="persist:<name>">`);
-  - the `org.luch.importer` native messaging host is found inside `Luch.app` without installing anything;
+  - the `org.luch.importer` native messaging host is found inside `Luch.app` without installing anything, and the `com.apple.passwordmanager` host description is written with the built-in extension allowed;
   - the Luch window has no system title bar: the UI goes under it, the window buttons sit in the sidebar header, and `-webkit-app-region: drag` areas move the window, like `titleBarStyle: 'hiddenInset'` in Electron (`chrome/browser/ui/luch_window.h`);
   - in a Luch window, Chromium menu commands and reserved shortcuts (⌘T, ⌘W, ⌘L, ⌘R, ⌘1…⌘9, …) are passed to the Luch UI; ⌘N / ⌘⇧N open new Luch windows.
 

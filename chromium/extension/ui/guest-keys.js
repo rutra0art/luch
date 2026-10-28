@@ -15,4 +15,9 @@
     e.stopImmediatePropagation();
     chrome.runtime.sendMessage({ type: 'luch:key', key }).catch(() => {});
   }, true);
+  // Щелчок по странице закрывает всплывающие панели Luch (загрузки, меню пространств) —
+  // сам интерфейс щелчков внутри вкладки не видит
+  addEventListener('mousedown', (e) => {
+    if (e.isTrusted) chrome.runtime.sendMessage({ type: 'luch:page-click' }).catch(() => {});
+  }, true);
 })();

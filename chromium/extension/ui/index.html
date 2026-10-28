@@ -187,6 +187,7 @@
         <button data-section="skills">Скиллы Gemini</button>
         <button data-section="translate">Перевод</button>
         <button data-section="dns">DNS</button>
+        <button data-section="passwords">Пароли Apple</button>
         <button data-section="shortcuts">Сочетания клавиш</button>
         <button data-section="import">Импорт</button>
         <button data-section="data">Данные</button>
@@ -298,6 +299,21 @@
             </label>
             <p class="note" id="set-dns-status"></p>
             <p class="note">Свой DNS работает по защищённому протоколу DNS-over-HTTPS: укажите адрес вида https://…/dns-query (можно несколько через пробел). Настройка действует на все пространства и окна Luch.</p>
+          </section>
+
+          <section data-section="passwords" hidden>
+            <p class="note">Luch подставляет логины и пароли из приложения «Пароли» (связка ключей iCloud), как Safari: щёлкните по полю входа на сайте и выберите учётную запись. Пароли остаются в macOS — Luch получает пароль только для того сайта, где вы выбрали вход.</p>
+            <p class="note" id="set-pw-status"></p>
+            <div class="row" id="set-pw-connect-row" hidden>
+              <button id="set-pw-connect" class="pill primary-pill">Подключить</button>
+            </div>
+            <label class="row" id="set-pw-pin-row" hidden>Код из окна macOS
+              <input id="set-pw-pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" spellcheck="false" placeholder="000000">
+            </label>
+            <div class="row" id="set-pw-disconnect-row" hidden>
+              <button id="set-pw-disconnect" class="pill">Отключить</button>
+            </div>
+            <p class="note">Код нужно вводить после каждого перезапуска Luch, так же как в расширении iCloud Passwords для Chrome. Для этого нужна macOS 14 или новее и включённые Пароли iCloud.</p>
           </section>
 
           <section data-section="shortcuts" hidden>
