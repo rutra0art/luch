@@ -2009,11 +2009,24 @@ const TR_DETECT = `(() => {
 // Собирает ещё не переведённые текстовые узлы страницы и запоминает оригиналы
 const TR_COLLECT = `(() => {
   const L = window.__luchTr || (window.__luchTr = { nodes: [], orig: [], applied: [], seen: new WeakSet() });
-  const skip = /^(SCRIPT|STYLE|NOSCRIPT|CODE|PRE|TEXTAREA|SVG|KBD|SAMP|VAR)$/;
+  const skip = /^(SCRIPT|STYLE|NOSCRIPT|CODE|PRE|TEXTAREA|SVG|KBD|SAMP|VAR|MAT-ICON)$/;
+  // Значки, нарисованные шрифтом (Material Symbols, Font Awesome…): их текст — имя значка
+  // вроде menu_open или keyboard_arrow_down, а не слова. Переведённое имя ломает значок
+  const ICON_FONT = /material|symbols|icons?\\b|awesome|glyph|ionicons|feather|remixicon|codicon|lucide|phosphor/i;
+  const ICON_CLASS = /(^|\\s)(material-(icons|symbols)[\\w-]*|google-symbols|mat-icon|glyphicon|fa[srlbd]?)(\\s|$)/;
+  const icons = new WeakMap();
+  const isIcon = (el) => {
+    if (!icons.has(el)) {
+      const cls = typeof el.className === 'string' ? el.className : '';
+      icons.set(el, ICON_CLASS.test(cls) || ICON_FONT.test(getComputedStyle(el).fontFamily));
+    }
+    return icons.get(el);
+  };
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       const t = n.nodeValue.trim();
       if (t.length < 2 || !/\\p{L}/u.test(t) || L.seen.has(n)) return NodeFilter.FILTER_REJECT;
+      if (n.parentElement && isIcon(n.parentElement)) return NodeFilter.FILTER_REJECT;
       for (let p = n.parentElement; p; p = p.parentElement) {
         // translate="no" на всей странице (html/body) не учитываем: перевод включил сам пользователь;
         // на отдельных элементах (код, названия) — соблюдаем
