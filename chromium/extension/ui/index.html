@@ -236,6 +236,16 @@
             <label class="row">Подгонять ширину сайтов под окно <input type="checkbox" id="set-auto-fit"></label>
             <label class="row">Автоматически скрывать колонку вкладок <input type="checkbox" id="set-autohide"></label>
             <label class="row">⌘-клик по ссылке собирает вкладки в группу <input type="checkbox" id="set-cmd-groups"></label>
+            <label class="row">Выгружать из памяти вкладки, которыми не пользовались
+              <select id="set-sleep">
+                <option value="0">Никогда</option>
+                <option value="15">Через 15 минут</option>
+                <option value="30">Через 30 минут</option>
+                <option value="60">Через час</option>
+                <option value="180">Через 3 часа</option>
+              </select>
+            </label>
+            <p class="note">Выгруженная вкладка остаётся в колонке и загружается заново, когда вы её откроете. Так Luch тратит меньше памяти и работает быстрее. Вкладки со звуком не выгружаются.</p>
             <label class="row">Закрывать вкладки, которыми не пользовались
               <select id="set-cleanup">
                 <option value="0">Никогда</option>

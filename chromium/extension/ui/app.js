@@ -11,7 +11,7 @@ const SEARCH_ENGINES = {
 const DEFAULT_SETTINGS = {
   search: 'google', theme: 'system', restore: true, translateTo: 'ru',
   newTabsTop: true, autohide: false, cmdClickGroups: true, cleanupHours: 0, autoFit: true, translateEngine: 'online',
-  autoUpdate: true,
+  autoUpdate: true, sleepMinutes: 30,
 };
 const DEFAULT_PINS = [
   { url: 'https://mail.google.com/', title: 'Gmail' },
@@ -307,6 +307,9 @@ function bindWebview(tab, token) {
 function activateTab(id) {
   const tab = tabs.find(t => t.id === id);
   if (!tab) return;
+  // Время ухода с вкладки — от него считается, когда её можно выгрузить из памяти
+  const prev = activeTab();
+  if (prev && prev !== tab) prev.lastUsed = Date.now();
   if (tab.spaceId !== currentSpace) setSpace(tab.spaceId, { activate: false });
   ensureWebview(tab);
   activeId = id;
@@ -2397,6 +2400,33 @@ $('tabbar').addEventListener('mouseleave', () => {
   }, 300);
 });
 
+// ---------- Выгрузка вкладок из памяти ----------
+// Вкладки, которыми давно не пользовались, освобождают память и процессор: страница
+// закрывается, а вкладка остаётся в колонке и загружается заново при открытии.
+// Не трогаем открытую вкладку, разделённый экран и вкладки, где играет звук
+
+function sleepTab(t) {
+  if (!t.webview) return;
+  t.webview.remove();
+  t.webview = null;
+  t.wcId = null;
+  t.loading = false;
+}
+
+setInterval(() => {
+  const minutes = Number(settings().sleepMinutes);
+  if (!minutes) return;
+  const limit = Date.now() - minutes * 60e3;
+  let changed = false;
+  for (const t of tabs) {
+    if (!t.webview || t.id === activeId || t.audible || t.lastUsed > limit) continue;
+    if (split && (split.a === t.id || split.b === t.id)) continue;
+    sleepTab(t);
+    changed = true;
+  }
+  if (changed) renderTabs();
+}, 60e3);
+
 // ---------- Автоочистка вкладок ----------
 
 setInterval(() => {
@@ -2430,6 +2460,7 @@ async function openSettings(section = 'general') {
   $('set-autohide').checked = s.autohide;
   $('set-cmd-groups').checked = s.cmdClickGroups;
   $('set-cleanup').value = String(s.cleanupHours);
+  $('set-sleep').value = String(s.sleepMinutes);
   $('set-translate-to').value = s.translateTo;
   $('set-translate-engine').value = s.translateEngine;
   $('set-auto-translate').checked = store.get('autoTranslate', false);
@@ -2821,6 +2852,7 @@ $('set-new-top').onchange = (e) => setSetting('newTabsTop', e.target.checked);
 $('set-auto-fit').onchange = (e) => { setSetting('autoFit', e.target.checked); for (const t of tabs) if (t.webview) autoFit(t); };
 $('set-autohide').onchange = (e) => { setSetting('autohide', e.target.checked); applyAutohide(); };
 $('set-cmd-groups').onchange = (e) => setSetting('cmdClickGroups', e.target.checked);
+$('set-sleep').onchange = (e) => setSetting('sleepMinutes', Number(e.target.value));
 $('set-cleanup').onchange = (e) => setSetting('cleanupHours', Number(e.target.value));
 $('set-translate-to').onchange = (e) => setSetting('translateTo', e.target.value);
 $('set-translate-engine').onchange = (e) => setSetting('translateEngine', e.target.value);

@@ -182,12 +182,19 @@
     const [d] = await chrome.downloads.search({ id });
     if (d) for (const fn of downloadHandlers) fn({ ...downloadInfo(d), started });
   };
-  chrome.downloads.onCreated.addListener((d) => pushDownload(d.id, true));
-  chrome.downloads.onChanged.addListener((d) => pushDownload(d.id));
-  // Пока что-то качается, обновляем прогресс раз в полсекунды
-  setInterval(async () => {
-    for (const d of await chrome.downloads.search({ state: 'in_progress' })) for (const fn of downloadHandlers) fn(downloadInfo(d));
-  }, 500);
+  // Пока что-то качается, обновляем прогресс раз в полсекунды; когда загрузок нет — не опрашиваем
+  let progressTimer = null;
+  const watchProgress = () => {
+    if (progressTimer) return;
+    progressTimer = setInterval(async () => {
+      const active = await chrome.downloads.search({ state: 'in_progress', paused: false });
+      for (const d of active) for (const fn of downloadHandlers) fn(downloadInfo(d));
+      if (!active.length) { clearInterval(progressTimer); progressTimer = null; }
+    }, 500);
+  };
+  chrome.downloads.onCreated.addListener((d) => { pushDownload(d.id, true); watchProgress(); });
+  chrome.downloads.onChanged.addListener((d) => { pushDownload(d.id); if (d.paused?.current === false) watchProgress(); });
+  watchProgress();
 
   // ---------- Перевод ----------
   async function translateOnline(texts, target, source) {
